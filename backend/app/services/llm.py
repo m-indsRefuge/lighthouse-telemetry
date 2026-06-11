@@ -26,7 +26,7 @@ from app.services.insights import build_system_insight
 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 DEFAULT_OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
-DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
+DEFAULT_OLLAMA_MODEL = "qwen2.5:3b"
 OLLAMA_TIMEOUT_SECONDS = 30
 OLLAMA_STATUS_TIMEOUT_SECONDS = 5
 
