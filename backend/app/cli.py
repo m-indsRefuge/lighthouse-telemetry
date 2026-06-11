@@ -195,7 +195,7 @@ def print_process_report(telemetry: dict[str, Any]) -> None:
 
 def print_diagnosis(telemetry: dict[str, Any]) -> None:
     """
-    Print a simple explanation of likely performance issues.
+    Print a simple explanation of likely performance or crash-related issues.
     """
     cpu = telemetry.get("cpu", {})
     memory = telemetry.get("memory", {})
@@ -206,49 +206,70 @@ def print_diagnosis(telemetry: dict[str, Any]) -> None:
     memory_status = classify_percent(memory.get("usage_percent"), 80, 90)
     disk_status = classify_percent(disk.get("usage_percent"), 80, 90)
 
+    event_report = get_recent_system_events(limit=100)
+    event_status = event_report.get("status", "unknown")
+    severity_summary = event_report.get("severity_summary", {})
+
+    critical_events = severity_summary.get("critical", 0)
+    warning_events = severity_summary.get("warning", 0)
+    context_events = severity_summary.get("context", 0)
+
     print("\nLIGHTHOUSE DIAGNOSIS")
     print("=" * 52)
 
-    issues: list[str] = []
-
-    if cpu_status in {"WARNING", "CRITICAL"}:
-        issues.append(
-            f"CPU usage is high at {cpu.get('usage_percent', 'Unknown')}%."
-        )
-
-    if memory_status in {"WARNING", "CRITICAL"}:
-        issues.append(
-            f"Memory usage is high at {memory.get('usage_percent', 'Unknown')}%."
-        )
-
-    if disk_status in {"WARNING", "CRITICAL"}:
-        issues.append(
-            f"Disk usage is high at {disk.get('usage_percent', 'Unknown')}%."
-        )
+    print("Live telemetry:")
+    print(f"- CPU usage:    {cpu.get('usage_percent', 'Unknown')}%  | {cpu_status}")
+    print(f"- Memory usage: {memory.get('usage_percent', 'Unknown')}% | {memory_status}")
+    print(f"- Disk usage:   {disk.get('usage_percent', 'Unknown')}%  | {disk_status}")
 
     process_list = processes.get("processes", [])
 
     if process_list:
         top = process_list[0]
-        issues.append(
-            "Highest memory process is "
+        print(
+            "- Highest memory process: "
             f"{top.get('name', 'Unknown')} "
-            f"using {top.get('memory_mb', 'Unknown')} MB."
+            f"using {top.get('memory_mb', 'Unknown')} MB"
         )
 
-    if not issues:
-        print("No obvious performance issue detected.")
-        print()
-        print("Your CPU, memory, and disk usage all appear healthy.")
+    print()
+    print("Recent event evidence:")
+
+    if event_status != "ok":
+        print(f"- Event log check unavailable: {event_report.get('message', 'Unknown error')}")
     else:
-        print("Findings:")
-        for issue in issues:
-            print(f"- {issue}")
+        print(f"- Critical events: {critical_events}")
+        print(f"- Warning events:  {warning_events}")
+        print(f"- Context events:  {context_events}")
+
+        possible_causes = event_report.get("possible_causes", [])
+
+        for cause in possible_causes:
+            print(f"- {cause}")
+
+    print()
+    print("Conclusion:")
+
+    has_live_pressure = any(
+        status in {"WARNING", "CRITICAL"}
+        for status in {cpu_status, memory_status, disk_status}
+    )
+
+    if critical_events > 0:
+        print("A critical crash-related event was found. Run 'events' for details.")
+    elif warning_events > 0:
+        print("Warning-level system events were found. Run 'events' for details.")
+    elif has_live_pressure:
+        print("Live system pressure was detected, but no critical crash pattern was found.")
+    else:
+        print("No obvious system fault detected right now.")
 
     print()
     print("Suggested next step:")
 
-    if cpu_status in {"WARNING", "CRITICAL"}:
+    if critical_events > 0 or warning_events > 0:
+        print("- Run the 'events' command and review the event classifications.")
+    elif cpu_status in {"WARNING", "CRITICAL"}:
         print("- Run the 'processes' command and look for high CPU usage.")
     elif memory_status in {"WARNING", "CRITICAL"}:
         print("- Close unused applications or browser tabs.")
