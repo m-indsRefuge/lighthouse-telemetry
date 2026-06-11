@@ -11,6 +11,7 @@ from app.collectors.event_logs import get_recent_system_events
 from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
 from app.services.assistant import classify_user_intent
+from app.services.insights import build_system_insight, format_insight_report
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 
 
@@ -46,6 +47,8 @@ def print_help() -> None:
     print("processes   Show top memory processes")
     print("diagnose    Explain likely causes of slowness")
     print("slow        Alias for diagnose")
+    print("insight     Show a plain-English Lighthouse assessment")
+    print("explain     Alias for insight")
     print("events      Show recent crash-relevant Windows events")
     print("crash       Alias for events")
     print("save        Save a timestamped local JSON snapshot")
@@ -467,6 +470,21 @@ def print_last_snapshot_report() -> None:
     print("=" * 52)
 
 
+def print_insight_report() -> None:
+    """
+    Print a plain-English Lighthouse assessment.
+    """
+    telemetry = collect_telemetry()
+    event_report = get_recent_system_events(limit=100)
+
+    insight = build_system_insight(
+        telemetry=telemetry,
+        event_report=event_report,
+    )
+
+    print(format_insight_report(insight))
+
+
 def run_canonical_command(command: str) -> str:
     """
     Run a known Lighthouse command.
@@ -517,6 +535,10 @@ def run_canonical_command(command: str) -> str:
     if command in {"diagnose", "slow"}:
         telemetry = collect_telemetry()
         print_diagnosis(telemetry)
+        return "handled"
+
+    if command in {"insight", "explain", "assessment", "assistant"}:
+        print_insight_report()
         return "handled"
 
     if command in {"events", "event", "crash", "crashes"}:
