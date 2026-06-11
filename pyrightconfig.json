@@ -1,0 +1,13 @@
+﻿{
+  "include": [
+    "backend",
+    "tests"
+  ],
+  "extraPaths": [
+    "backend"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false
+}
