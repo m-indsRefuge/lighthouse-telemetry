@@ -50,8 +50,21 @@ def normalize_text(text: str) -> str:
 def contains_any(text: str, phrases: list[str]) -> bool:
     """
     Return True if any phrase appears in the normalized user input.
+
+    Single-word phrases must match whole words.
+    Multi-word phrases can match as phrases.
+    This prevents words like "saved" from incorrectly matching "save".
     """
-    return any(phrase in text for phrase in phrases)
+    words = set(text.split())
+
+    for phrase in phrases:
+        if " " in phrase:
+            if phrase in text:
+                return True
+        elif phrase in words:
+            return True
+
+    return False
 
 
 def classify_user_intent(user_input: str) -> AssistantIntent:
