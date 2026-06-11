@@ -282,6 +282,13 @@ def print_events_report(limit: int = 100) -> None:
     print(f"Events checked: {report.get('events_checked', 'Unknown')}")
     print(f"Relevant events found: {report.get('relevant_event_count', 'Unknown')}")
 
+    severity_summary = report.get("severity_summary", {})
+
+    print("\nSeverity summary:")
+    print(f"- Critical: {severity_summary.get('critical', 0)}")
+    print(f"- Warning:  {severity_summary.get('warning', 0)}")
+    print(f"- Context:  {severity_summary.get('context', 0)}")
+
     print("\nPossible causes:")
     possible_causes = report.get("possible_causes", [])
 
@@ -303,6 +310,8 @@ def print_events_report(limit: int = 100) -> None:
 
     for event in events:
         print(f"Time: {event.get('time', 'Unknown')}")
+        print(f"Severity: {event.get('severity', 'Unknown')}")
+        print(f"Type: {event.get('event_type_label', 'Unknown')}")
         print(f"Source: {event.get('source', 'Unknown')}")
         print(f"Event ID: {event.get('event_id', 'Unknown')}")
         print(f"Classification: {event.get('classification', 'Unknown')}")
