@@ -14,6 +14,7 @@ No system changes are made by this module.
 
 import json
 import os
+import socket
 import urllib.error
 import urllib.request
 from typing import Any
@@ -24,8 +25,10 @@ from app.services.insights import build_system_insight
 
 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+DEFAULT_OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
 DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 OLLAMA_TIMEOUT_SECONDS = 30
+OLLAMA_STATUS_TIMEOUT_SECONDS = 5
 
 
 def is_ollama_enabled() -> bool:
@@ -46,7 +49,12 @@ def get_ollama_model() -> str:
     """
     Return the configured Ollama model name.
     """
-    return os.getenv("LIGHTHOUSE_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip()
+    model = os.getenv("LIGHTHOUSE_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip()
+
+    if not model:
+        return DEFAULT_OLLAMA_MODEL
+
+    return model
 
 
 def build_lighthouse_context(user_question: str) -> dict[str, Any]:
@@ -170,7 +178,7 @@ def call_ollama(prompt: str) -> dict[str, Any]:
             "message": f"Ollama is unavailable: {error}",
             "model": model,
         }
-    except TimeoutError:
+    except (TimeoutError, socket.timeout):
         return {
             "status": "error",
             "message": "Ollama request timed out.",
@@ -187,6 +195,102 @@ def call_ollama(prompt: str) -> dict[str, Any]:
             "status": "error",
             "message": f"Ollama call failed: {error}",
             "model": model,
+        }
+
+
+def get_ollama_status() -> dict[str, Any]:
+    """
+    Check Lighthouse's Ollama configuration and local Ollama availability.
+
+    This does not generate text.
+    It only checks whether the local Ollama server can be reached and whether
+    the configured model appears in the installed model list.
+    """
+    configured_model = get_ollama_model()
+    enabled = is_ollama_enabled()
+
+    request = urllib.request.Request(
+        DEFAULT_OLLAMA_TAGS_URL,
+        method="GET",
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=OLLAMA_STATUS_TIMEOUT_SECONDS,
+        ) as response:
+            raw_body = response.read().decode("utf-8")
+            body = json.loads(raw_body)
+
+        models = body.get("models", [])
+        installed_models: list[str] = []
+
+        for model in models:
+            name = model.get("name") or model.get("model")
+
+            if name:
+                installed_models.append(name)
+
+        configured_model_installed = configured_model in installed_models
+
+        return {
+            "status": "ok",
+            "ollama_enabled": enabled,
+            "server_available": True,
+            "configured_model": configured_model,
+            "configured_model_installed": configured_model_installed,
+            "installed_models": installed_models,
+            "generate_url": DEFAULT_OLLAMA_URL,
+            "tags_url": DEFAULT_OLLAMA_TAGS_URL,
+        }
+
+    except urllib.error.URLError as error:
+        return {
+            "status": "unavailable",
+            "ollama_enabled": enabled,
+            "server_available": False,
+            "configured_model": configured_model,
+            "configured_model_installed": False,
+            "installed_models": [],
+            "message": f"Ollama is unavailable: {error}",
+            "generate_url": DEFAULT_OLLAMA_URL,
+            "tags_url": DEFAULT_OLLAMA_TAGS_URL,
+        }
+    except (TimeoutError, socket.timeout):
+        return {
+            "status": "unavailable",
+            "ollama_enabled": enabled,
+            "server_available": False,
+            "configured_model": configured_model,
+            "configured_model_installed": False,
+            "installed_models": [],
+            "message": "Ollama status check timed out.",
+            "generate_url": DEFAULT_OLLAMA_URL,
+            "tags_url": DEFAULT_OLLAMA_TAGS_URL,
+        }
+    except json.JSONDecodeError as error:
+        return {
+            "status": "error",
+            "ollama_enabled": enabled,
+            "server_available": True,
+            "configured_model": configured_model,
+            "configured_model_installed": False,
+            "installed_models": [],
+            "message": f"Ollama returned invalid JSON: {error}",
+            "generate_url": DEFAULT_OLLAMA_URL,
+            "tags_url": DEFAULT_OLLAMA_TAGS_URL,
+        }
+    except Exception as error:
+        return {
+            "status": "error",
+            "ollama_enabled": enabled,
+            "server_available": False,
+            "configured_model": configured_model,
+            "configured_model_installed": False,
+            "installed_models": [],
+            "message": f"Ollama status check failed: {error}",
+            "generate_url": DEFAULT_OLLAMA_URL,
+            "tags_url": DEFAULT_OLLAMA_TAGS_URL,
         }
 
 

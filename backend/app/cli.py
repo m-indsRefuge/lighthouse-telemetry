@@ -12,7 +12,7 @@ from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
 from app.services.assistant import classify_user_intent
 from app.services.insights import build_system_insight, format_insight_report
-from app.services.llm import ask_lighthouse
+from app.services.llm import ask_lighthouse, get_ollama_status
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 
 
@@ -51,6 +51,7 @@ def print_help() -> None:
     print("insight     Show a plain-English Lighthouse assessment")
     print("explain     Alias for insight")
     print("ask         Ask Lighthouse a plain-English question")
+    print("model       Show local Ollama model status")
     print("events      Show recent crash-relevant Windows events")
     print("crash       Alias for events")
     print("save        Save a timestamped local JSON snapshot")
@@ -506,6 +507,56 @@ def print_ask_report(question: str) -> None:
     print(result.get("answer", "No answer returned."))
 
 
+def print_model_report() -> None:
+    """
+    Print local Ollama model status.
+    """
+    result = get_ollama_status()
+
+    print("\nLIGHTHOUSE MODEL STATUS")
+    print("=" * 52)
+    print(f"Status: {result.get('status', 'unknown')}")
+    print(f"Ollama enabled: {result.get('ollama_enabled', False)}")
+    print(f"Ollama server available: {result.get('server_available', False)}")
+    print(f"Configured model: {result.get('configured_model', 'Unknown')}")
+    print(
+        "Configured model installed: "
+        f"{result.get('configured_model_installed', False)}"
+    )
+
+    message = result.get("message")
+
+    if message:
+        print()
+        print(f"Message: {message}")
+
+    installed_models = result.get("installed_models", [])
+
+    print()
+    print("Installed models:")
+
+    if installed_models:
+        for model in installed_models:
+            print(f"- {model}")
+    else:
+        print("- No installed models detected.")
+
+    print()
+    print("AI mode guidance:")
+
+    if not result.get("ollama_enabled", False):
+        print("- Lighthouse is currently using the safe deterministic fallback.")
+        print("- Set LIGHTHOUSE_USE_OLLAMA=1 to enable local Ollama attempts.")
+    elif not result.get("server_available", False):
+        print("- Ollama is enabled, but the local Ollama server is not reachable.")
+    elif not result.get("configured_model_installed", False):
+        print("- Ollama is reachable, but the configured model is not installed.")
+    else:
+        print("- Ollama is enabled and the configured model appears to be installed.")
+
+    print("=" * 52)
+
+
 def run_canonical_command(command: str) -> str:
     """
     Run a known Lighthouse command.
@@ -560,6 +611,10 @@ def run_canonical_command(command: str) -> str:
 
     if command in {"insight", "explain", "assessment", "assistant"}:
         print_insight_report()
+        return "handled"
+
+    if command in {"model", "models", "llm", "ollama"}:
+        print_model_report()
         return "handled"
 
     if command in {"events", "event", "crash", "crashes"}:
