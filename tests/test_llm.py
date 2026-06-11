@@ -1,4 +1,4 @@
-"""
+﻿"""
 Tests for the Lighthouse safe ask layer.
 """
 
@@ -95,7 +95,7 @@ def test_format_lighthouse_answer_contains_question() -> None:
     assert "Question: Is anything wrong with my laptop?" in answer
     assert "Overall status: GOOD" in answer
     assert "AI mode:" in answer
-    assert "Local LLM is not enabled yet." in answer
+    assert "Local Ollama model was not used." in answer
 
 
 def test_ask_lighthouse_returns_safe_stub_answer(monkeypatch) -> None:
@@ -112,7 +112,7 @@ def test_ask_lighthouse_returns_safe_stub_answer(monkeypatch) -> None:
 
     assert result["status"] == "ok"
     assert result["provider"] == "lighthouse_insight_engine"
-    assert result["model"] == "deterministic_stub"
+    assert result["model"] == "deterministic_fallback"
     assert result["uses_external_ai"] is False
     assert result["question"] == "Is anything wrong with my laptop?"
     assert "LIGHTHOUSE ASSISTANT" in result["answer"]
