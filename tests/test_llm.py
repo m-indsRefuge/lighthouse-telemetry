@@ -12,7 +12,11 @@ BACKEND_PATH = PROJECT_ROOT / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
-from app.services.llm import ask_lighthouse, format_lighthouse_answer
+from app.services.llm import (
+    ask_lighthouse,
+    format_lighthouse_answer,
+    run_ollama_model_test,
+)
 
 
 def build_fake_telemetry() -> dict[str, Any]:
@@ -153,3 +157,91 @@ def test_ask_lighthouse_includes_insight_metrics(monkeypatch) -> None:
     assert insight["metrics"]["cpu_status"] == "OK"
     assert insight["metrics"]["memory_status"] == "OK"
     assert insight["metrics"]["disk_status"] == "OK"
+
+
+def test_run_ollama_model_test_returns_disabled_when_ollama_is_off(monkeypatch) -> None:
+    """
+    The model test should not call Ollama when Ollama is disabled.
+    """
+    monkeypatch.setattr(
+        "app.services.llm.is_ollama_enabled",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "app.services.llm.get_ollama_model",
+        lambda: "qwen2.5:3b",
+    )
+
+    result = run_ollama_model_test()
+
+    assert result["status"] == "disabled"
+    assert result["model"] == "qwen2.5:3b"
+    assert "LIGHTHOUSE_USE_OLLAMA=1" in result["message"]
+
+
+def test_run_ollama_model_test_returns_ok_when_model_responds(monkeypatch) -> None:
+    """
+    The model test should return ok when Ollama is enabled and responds.
+    """
+    monkeypatch.setattr(
+        "app.services.llm.is_ollama_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.services.llm.get_ollama_model",
+        lambda: "qwen2.5:3b",
+    )
+    monkeypatch.setattr(
+        "app.services.llm.get_ollama_status",
+        lambda: {
+            "status": "ok",
+            "server_available": True,
+            "configured_model": "qwen2.5:3b",
+            "configured_model_installed": True,
+            "installed_models": ["qwen2.5:3b"],
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.llm.call_ollama",
+        lambda prompt: {
+            "status": "ok",
+            "model": "qwen2.5:3b",
+            "answer": "Lighthouse model test successful.",
+        },
+    )
+
+    result = run_ollama_model_test()
+
+    assert result["status"] == "ok"
+    assert result["model"] == "qwen2.5:3b"
+    assert "Lighthouse model test successful" in result["response"]
+
+
+def test_run_ollama_model_test_reports_missing_model(monkeypatch) -> None:
+    """
+    The model test should report when Ollama is reachable but the model is missing.
+    """
+    monkeypatch.setattr(
+        "app.services.llm.is_ollama_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "app.services.llm.get_ollama_model",
+        lambda: "qwen2.5:3b",
+    )
+    monkeypatch.setattr(
+        "app.services.llm.get_ollama_status",
+        lambda: {
+            "status": "ok",
+            "server_available": True,
+            "configured_model": "qwen2.5:3b",
+            "configured_model_installed": False,
+            "installed_models": [],
+        },
+    )
+
+    result = run_ollama_model_test()
+
+    assert result["status"] == "error"
+    assert result["model"] == "qwen2.5:3b"
+    assert "configured model is not installed" in result["message"]

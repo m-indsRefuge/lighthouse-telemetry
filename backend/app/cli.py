@@ -12,7 +12,7 @@ from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
 from app.services.assistant import classify_user_intent
 from app.services.insights import build_system_insight, format_insight_report
-from app.services.llm import ask_lighthouse, get_ollama_status
+from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 
 
@@ -52,6 +52,7 @@ def print_help() -> None:
     print("explain     Alias for insight")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
+    print("model test  Send a tiny safe test prompt to the local Ollama model")
     print("events      Show recent crash-relevant Windows events")
     print("crash       Alias for events")
     print("save        Save a timestamped local JSON snapshot")
@@ -557,6 +558,29 @@ def print_model_report() -> None:
     print("=" * 52)
 
 
+def print_model_test_report() -> None:
+    """
+    Test the configured local Ollama model with a tiny safe prompt.
+    """
+    result = run_ollama_model_test()
+
+    print("\nLIGHTHOUSE MODEL TEST")
+    print("=" * 52)
+    print(f"Status: {result.get('status', 'unknown')}")
+    print(f"Configured model: {result.get('model', 'Unknown')}")
+
+    if result.get("status") == "ok":
+        print()
+        print("Response:")
+        print(result.get("response", "No response returned."))
+    else:
+        print()
+        print("Message:")
+        print(result.get("message", "Model test failed."))
+
+    print("=" * 52)
+
+
 def run_canonical_command(command: str) -> str:
     """
     Run a known Lighthouse command.
@@ -611,6 +635,10 @@ def run_canonical_command(command: str) -> str:
 
     if command in {"insight", "explain", "assessment", "assistant"}:
         print_insight_report()
+        return "handled"
+
+    if command in {"model test", "models test", "llm test", "ollama test"}:
+        print_model_test_report()
         return "handled"
 
     if command in {"model", "models", "llm", "ollama"}:

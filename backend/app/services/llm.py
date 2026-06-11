@@ -294,6 +294,63 @@ def get_ollama_status() -> dict[str, Any]:
         }
 
 
+def run_ollama_model_test() -> dict[str, Any]:
+    """
+    Send a tiny safe test prompt to the configured Ollama model.
+
+    This confirms whether the local model can actually generate a response.
+    """
+    configured_model = get_ollama_model()
+
+    if not is_ollama_enabled():
+        return {
+            "status": "disabled",
+            "model": configured_model,
+            "message": "Ollama is not enabled. Set LIGHTHOUSE_USE_OLLAMA=1 first.",
+        }
+
+    status_result = get_ollama_status()
+
+    if not status_result.get("server_available", False):
+        return {
+            "status": "error",
+            "model": configured_model,
+            "message": status_result.get(
+                "message",
+                "Ollama server is not available.",
+            ),
+        }
+
+    if not status_result.get("configured_model_installed", False):
+        return {
+            "status": "error",
+            "model": configured_model,
+            "message": (
+                "Ollama is reachable, but the configured model is not installed."
+            ),
+        }
+
+    prompt = (
+        "You are Lighthouse, a local telemetry assistant. "
+        "Reply with exactly this sentence: Lighthouse model test successful."
+    )
+
+    result = call_ollama(prompt)
+
+    if result.get("status") != "ok":
+        return {
+            "status": "error",
+            "model": configured_model,
+            "message": result.get("message", "Ollama model test failed."),
+        }
+
+    return {
+        "status": "ok",
+        "model": result.get("model", configured_model),
+        "response": result.get("answer", ""),
+    }
+
+
 def format_lighthouse_answer(
     user_question: str,
     insight: dict[str, Any],
