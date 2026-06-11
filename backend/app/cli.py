@@ -10,6 +10,7 @@ from typing import Any
 from app.collectors.event_logs import get_recent_system_events
 from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
+from app.services.assistant import classify_user_intent
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 
 
@@ -53,6 +54,13 @@ def print_help() -> None:
     print("help        Show this command list")
     print("quit        Exit Lighthouse")
     print("-" * 52)
+    print("\nYou can also ask in plain English, for example:")
+    print("- is my laptop healthy")
+    print("- why is my laptop slow")
+    print("- did my laptop crash recently")
+    print("- save this report")
+    print("- show my saved snapshots")
+    print("- show me the last report")
 
 
 def print_health_report(telemetry: dict[str, Any]) -> None:
@@ -459,6 +467,77 @@ def print_last_snapshot_report() -> None:
     print("=" * 52)
 
 
+def run_canonical_command(command: str) -> str:
+    """
+    Run a known Lighthouse command.
+
+    Returns:
+        handled: command was handled and the loop should continue
+        exit: command was handled and the loop should exit
+        unknown: command was not recognized
+    """
+    if command in {"quit", "exit", "q"}:
+        print("Exiting Lighthouse.")
+        return "exit"
+
+    if command in {"help", "h", "?"}:
+        print_help()
+        return "handled"
+
+    if command in {"snapshot", "report"}:
+        telemetry = collect_telemetry()
+        print_console_report(telemetry)
+        return "handled"
+
+    if command == "health":
+        telemetry = collect_telemetry()
+        print_health_report(telemetry)
+        return "handled"
+
+    if command == "cpu":
+        telemetry = collect_telemetry()
+        print_cpu_report(telemetry)
+        return "handled"
+
+    if command == "memory":
+        telemetry = collect_telemetry()
+        print_memory_report(telemetry)
+        return "handled"
+
+    if command == "disk":
+        telemetry = collect_telemetry()
+        print_disk_report(telemetry)
+        return "handled"
+
+    if command in {"processes", "process"}:
+        telemetry = collect_telemetry()
+        print_process_report(telemetry)
+        return "handled"
+
+    if command in {"diagnose", "slow"}:
+        telemetry = collect_telemetry()
+        print_diagnosis(telemetry)
+        return "handled"
+
+    if command in {"events", "event", "crash", "crashes"}:
+        print_events_report()
+        return "handled"
+
+    if command in {"save", "save snapshot", "save report"}:
+        print_save_report()
+        return "handled"
+
+    if command in {"history", "snapshots"}:
+        print_history_report()
+        return "handled"
+
+    if command in {"last", "latest", "last snapshot"}:
+        print_last_snapshot_report()
+        return "handled"
+
+    return "unknown"
+
+
 def command_loop() -> None:
     """
     Start the Lighthouse interactive shell.
@@ -469,71 +548,38 @@ def command_loop() -> None:
     print("Type 'quit' to exit.")
 
     while True:
-        command = input("\nlighthouse> ").strip().lower()
+        user_input = input("\nlighthouse> ").strip()
+        command = user_input.lower()
 
         if not command:
             continue
 
-        if command in {"quit", "exit", "q"}:
-            print("Exiting Lighthouse.")
+        result = run_canonical_command(command)
+
+        if result == "exit":
             break
 
-        if command in {"help", "h", "?"}:
-            print_help()
+        if result == "handled":
             continue
 
-        if command in {"snapshot", "report"}:
-            telemetry = collect_telemetry()
-            print_console_report(telemetry)
-            continue
+        assistant_intent = classify_user_intent(user_input)
 
-        if command == "health":
-            telemetry = collect_telemetry()
-            print_health_report(telemetry)
-            continue
+        if assistant_intent.status == "ok" and assistant_intent.canonical_command:
+            print(
+                "\nAssistant interpreted your request as: "
+                f"{assistant_intent.canonical_command}"
+            )
+            print(f"Reason: {assistant_intent.reason}")
 
-        if command == "cpu":
-            telemetry = collect_telemetry()
-            print_cpu_report(telemetry)
-            continue
+            result = run_canonical_command(assistant_intent.canonical_command)
 
-        if command == "memory":
-            telemetry = collect_telemetry()
-            print_memory_report(telemetry)
-            continue
+            if result == "exit":
+                break
 
-        if command == "disk":
-            telemetry = collect_telemetry()
-            print_disk_report(telemetry)
-            continue
+            if result == "handled":
+                continue
 
-        if command in {"processes", "process"}:
-            telemetry = collect_telemetry()
-            print_process_report(telemetry)
-            continue
-
-        if command in {"diagnose", "slow", "why is my laptop slow"}:
-            telemetry = collect_telemetry()
-            print_diagnosis(telemetry)
-            continue
-
-        if command in {"events", "event", "crash", "crashes"}:
-            print_events_report()
-            continue
-
-        if command in {"save", "save snapshot", "save report"}:
-            print_save_report()
-            continue
-
-        if command in {"history", "snapshots"}:
-            print_history_report()
-            continue
-
-        if command in {"last", "latest", "last snapshot"}:
-            print_last_snapshot_report()
-            continue
-
-        print(f"Unknown command: {command}")
+        print(f"Unknown command: {user_input}")
         print("Type 'help' to see available commands.")
 
 
