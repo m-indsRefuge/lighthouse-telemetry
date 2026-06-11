@@ -12,6 +12,7 @@ from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
 from app.services.assistant import classify_user_intent
 from app.services.insights import build_system_insight, format_insight_report
+from app.services.llm import ask_lighthouse
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 
 
@@ -49,6 +50,7 @@ def print_help() -> None:
     print("slow        Alias for diagnose")
     print("insight     Show a plain-English Lighthouse assessment")
     print("explain     Alias for insight")
+    print("ask         Ask Lighthouse a plain-English question")
     print("events      Show recent crash-relevant Windows events")
     print("crash       Alias for events")
     print("save        Save a timestamped local JSON snapshot")
@@ -64,6 +66,8 @@ def print_help() -> None:
     print("- save this report")
     print("- show my saved snapshots")
     print("- show me the last report")
+    print("- ask is anything wrong with my laptop?")
+    print("- ask why does my laptop feel slow?")
 
 
 def print_health_report(telemetry: dict[str, Any]) -> None:
@@ -485,6 +489,23 @@ def print_insight_report() -> None:
     print(format_insight_report(insight))
 
 
+def print_ask_report(question: str) -> None:
+    """
+    Ask Lighthouse a plain-English question.
+    """
+    result = ask_lighthouse(question)
+
+    if result.get("status") != "ok":
+        print("\nLIGHTHOUSE ASSISTANT")
+        print("=" * 52)
+        print("Status: error")
+        print(result.get("message", "Unable to answer question."))
+        print("=" * 52)
+        return
+
+    print(result.get("answer", "No answer returned."))
+
+
 def run_canonical_command(command: str) -> str:
     """
     Run a known Lighthouse command.
@@ -574,6 +595,16 @@ def command_loop() -> None:
         command = user_input.lower()
 
         if not command:
+            continue
+
+        if command == "ask":
+            question = input("Ask Lighthouse> ").strip()
+            print_ask_report(question)
+            continue
+
+        if command.startswith("ask "):
+            question = user_input[4:].strip()
+            print_ask_report(question)
             continue
 
         result = run_canonical_command(command)
