@@ -99,6 +99,9 @@ def test_format_lighthouse_answer_contains_question() -> None:
 
 
 def test_ask_lighthouse_returns_safe_stub_answer(monkeypatch) -> None:
+    """
+    The ask layer should use the deterministic fallback when Ollama is disabled.
+    """
     monkeypatch.setattr(
         "app.services.llm.collect_telemetry",
         build_fake_telemetry,
@@ -106,6 +109,10 @@ def test_ask_lighthouse_returns_safe_stub_answer(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.llm.get_recent_system_events",
         lambda limit=100: build_fake_event_report(),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.is_ollama_enabled",
+        lambda: False,
     )
 
     result = ask_lighthouse("Is anything wrong with my laptop?")
@@ -114,12 +121,16 @@ def test_ask_lighthouse_returns_safe_stub_answer(monkeypatch) -> None:
     assert result["provider"] == "lighthouse_insight_engine"
     assert result["model"] == "deterministic_fallback"
     assert result["uses_external_ai"] is False
+    assert result["used_fallback"] is True
     assert result["question"] == "Is anything wrong with my laptop?"
     assert "LIGHTHOUSE ASSISTANT" in result["answer"]
     assert "Overall status: GOOD" in result["answer"]
 
 
 def test_ask_lighthouse_includes_insight_metrics(monkeypatch) -> None:
+    """
+    The ask layer should include structured insight metrics in fallback mode.
+    """
     monkeypatch.setattr(
         "app.services.llm.collect_telemetry",
         build_fake_telemetry,
@@ -127,6 +138,10 @@ def test_ask_lighthouse_includes_insight_metrics(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.llm.get_recent_system_events",
         lambda limit=100: build_fake_event_report(),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.is_ollama_enabled",
+        lambda: False,
     )
 
     result = ask_lighthouse("How is my system?")
