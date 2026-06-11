@@ -10,7 +10,7 @@ from typing import Any
 from app.collectors.event_logs import get_recent_system_events
 from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
-from app.services.snapshot_store import save_snapshot
+from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 
 
 def classify_percent(value: Any, warning_at: float, critical_at: float) -> str:
@@ -48,6 +48,8 @@ def print_help() -> None:
     print("events      Show recent crash-relevant Windows events")
     print("crash       Alias for events")
     print("save        Save a timestamped local JSON snapshot")
+    print("history     List saved local snapshots")
+    print("last        Show the most recent saved snapshot summary")
     print("help        Show this command list")
     print("quit        Exit Lighthouse")
     print("-" * 52)
@@ -366,6 +368,97 @@ def print_save_report() -> None:
     print("=" * 52)
 
 
+def print_history_report() -> None:
+    """
+    Print saved Lighthouse snapshots.
+    """
+    result = list_snapshots(limit=10)
+
+    print("\nSNAPSHOT HISTORY")
+    print("=" * 52)
+
+    if result.get("status") != "ok":
+        print("Status: error")
+        print(result.get("message", "Unable to list snapshots."))
+        print("=" * 52)
+        return
+
+    snapshots = result.get("snapshots", [])
+
+    print(f"Total snapshots: {result.get('snapshot_count', 0)}")
+
+    if not snapshots:
+        print("No saved snapshots found. Run 'save' first.")
+        print("=" * 52)
+        return
+
+    print("\nMost recent snapshots:")
+    print("-" * 52)
+
+    for index, snapshot in enumerate(snapshots, start=1):
+        print(f"{index}. {snapshot.get('filename', 'Unknown')}")
+        print(f"   Modified: {snapshot.get('modified_at', 'Unknown')}")
+        print(f"   Size: {snapshot.get('size_kb', 'Unknown')} KB")
+        print(f"   Path: {snapshot.get('path', 'Unknown')}")
+
+    print("=" * 52)
+
+
+def print_last_snapshot_report() -> None:
+    """
+    Print a summary of the most recent saved Lighthouse snapshot.
+    """
+    result = get_latest_snapshot()
+
+    print("\nLATEST SNAPSHOT")
+    print("=" * 52)
+
+    if result.get("status") != "ok":
+        print("Status: error")
+        print(result.get("message", "Unable to load latest snapshot."))
+        print("=" * 52)
+        return
+
+    snapshot = result.get("snapshot", {})
+    metadata = snapshot.get("metadata", {})
+    telemetry = snapshot.get("telemetry", {})
+    event_report = snapshot.get("event_report", {})
+
+    cpu = telemetry.get("cpu", {})
+    memory = telemetry.get("memory", {})
+    disk = telemetry.get("disk", {})
+    processes = telemetry.get("processes", {})
+
+    severity_summary = event_report.get("severity_summary", {})
+
+    print("Status: ok")
+    print(f"File: {result.get('filename', 'Unknown')}")
+    print(f"Generated at: {metadata.get('generated_at', 'Unknown')}")
+    print()
+    print("Telemetry summary:")
+    print(f"- CPU usage:    {cpu.get('usage_percent', 'Unknown')}%")
+    print(f"- Memory usage: {memory.get('usage_percent', 'Unknown')}%")
+    print(f"- Disk usage:   {disk.get('usage_percent', 'Unknown')}%")
+
+    process_list = processes.get("processes", [])
+
+    if process_list:
+        top = process_list[0]
+        print(
+            "- Highest memory process: "
+            f"{top.get('name', 'Unknown')} "
+            f"using {top.get('memory_mb', 'Unknown')} MB"
+        )
+
+    print()
+    print("Event summary:")
+    print(f"- Critical events: {severity_summary.get('critical', 0)}")
+    print(f"- Warning events:  {severity_summary.get('warning', 0)}")
+    print(f"- Context events:  {severity_summary.get('context', 0)}")
+
+    print("=" * 52)
+
+
 def command_loop() -> None:
     """
     Start the Lighthouse interactive shell.
@@ -430,6 +523,14 @@ def command_loop() -> None:
 
         if command in {"save", "save snapshot", "save report"}:
             print_save_report()
+            continue
+
+        if command in {"history", "snapshots"}:
+            print_history_report()
+            continue
+
+        if command in {"last", "latest", "last snapshot"}:
+            print_last_snapshot_report()
             continue
 
         print(f"Unknown command: {command}")
