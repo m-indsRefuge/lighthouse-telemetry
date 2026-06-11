@@ -10,6 +10,7 @@ from typing import Any
 from app.collectors.event_logs import get_recent_system_events
 from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
+from app.services.snapshot_store import save_snapshot
 
 
 def classify_percent(value: Any, warning_at: float, critical_at: float) -> str:
@@ -43,8 +44,10 @@ def print_help() -> None:
     print("disk        Show disk status")
     print("processes   Show top memory processes")
     print("diagnose    Explain likely causes of slowness")
+    print("slow        Alias for diagnose")
     print("events      Show recent crash-relevant Windows events")
     print("crash       Alias for events")
+    print("save        Save a timestamped local JSON snapshot")
     print("help        Show this command list")
     print("quit        Exit Lighthouse")
     print("-" * 52)
@@ -341,6 +344,28 @@ def print_events_report(limit: int = 100) -> None:
     print("=" * 52)
 
 
+def print_save_report() -> None:
+    """
+    Save a Lighthouse snapshot and print the result.
+    """
+    result = save_snapshot()
+
+    print("\nSAVE SNAPSHOT")
+    print("=" * 52)
+
+    if result.get("status") != "ok":
+        print("Status: error")
+        print(result.get("message", "Unable to save snapshot."))
+        print("=" * 52)
+        return
+
+    print("Status: ok")
+    print(f"Generated at: {result.get('generated_at', 'Unknown')}")
+    print(f"File: {result.get('filename', 'Unknown')}")
+    print(f"Path: {result.get('path', 'Unknown')}")
+    print("=" * 52)
+
+
 def command_loop() -> None:
     """
     Start the Lighthouse interactive shell.
@@ -401,6 +426,10 @@ def command_loop() -> None:
 
         if command in {"events", "event", "crash", "crashes"}:
             print_events_report()
+            continue
+
+        if command in {"save", "save snapshot", "save report"}:
+            print_save_report()
             continue
 
         print(f"Unknown command: {command}")
