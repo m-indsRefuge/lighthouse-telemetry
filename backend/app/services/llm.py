@@ -38,12 +38,27 @@ REQUIRED_OLLAMA_ANSWER_SECTIONS = [
 ]
 
 BLOCKED_OLLAMA_ANSWER_PHRASES = [
+    "virus",
+    "viruses",
+    "virus infection",
+    "virus infections",
+    "malware",
+    "spyware",
+    "ransomware",
+    "antivirus",
+    "hidden fault",
+    "hidden faults",
+    "comprehensive diagnostics",
+    "deeper analysis",
+    "deeper diagnostics",
     "delete files",
     "deleting files",
     "kill process",
     "killing process",
+    "killing processes",
     "end task",
     "force close",
+    "force closing",
     "edit registry",
     "registry editor",
     "disable services",
@@ -126,8 +141,8 @@ def build_ollama_prompt(user_question: str, insight: dict[str, Any]) -> str:
     Build a strict prompt for the local Ollama model.
 
     The model is only allowed to explain the supplied Lighthouse facts.
-    It should not invent causes, offer generic computer advice, or suggest
-    unsafe system changes.
+    The prompt avoids listing exact blocked phrases because the model may
+    echo them back. Exact phrase enforcement belongs in validate_ollama_answer().
     """
     metrics = insight.get("metrics", {})
     findings = insight.get("findings", [])
@@ -154,7 +169,7 @@ Your role:
 - Do not behave like a general computer-help chatbot.
 - Do not add generic maintenance advice unless it is directly supported by the evidence.
 - Do not imply that Lighthouse can repair, change, or control the computer.
-- Do not offer broad follow-up support or end with open-ended assistant phrases.
+- Do not offer broad follow-up support or open-ended assistance language.
 
 User question:
 {user_question}
@@ -182,12 +197,13 @@ Lighthouse Answer Policy:
 - Base the answer only on the evidence above.
 - Say "based on this snapshot" when giving a conclusion.
 - If the evidence looks healthy, say that no obvious fault is visible right now.
-- If evidence is limited, say what Lighthouse cannot determine.
-- Do not claim that the laptop is definitely fine.
+- If evidence is limited, use this wording: "Lighthouse cannot rule out issues outside this telemetry snapshot."
+- Do not overstate certainty.
 - Do not invent causes that are not present in the evidence.
-- Do not recommend deleting files, killing processes, editing the registry, disabling services, changing drivers, or changing Windows settings.
-- Do not recommend generic actions like updating software, restarting, cleaning the disk, scanning for viruses, closing apps, or contacting a professional unless the evidence directly supports that recommendation.
-- Do not say "please contact a professional", "let me know", "for further assistance", or similar broad support phrases.
+- Do not recommend generic actions or topics outside the supplied evidence.
+- Do not introduce categories of problems that are not present in the evidence.
+- Do not suggest OS-changing actions, destructive operations, or unsupported maintenance steps.
+- Do not end with broad support offers, escalation advice, or open-ended assistance language.
 - If the overall status is GOOD and the recommendation says no immediate action is needed, the next step should be: "No immediate action needed from this snapshot."
 - Keep the response short.
 
