@@ -221,19 +221,61 @@ def get_tool_execution_safety(tool_name: str) -> dict[str, object]:
     }
 
 
-def _refused_tool_result(tool_name: str, message: str) -> ToolExecutionResult:
+def _refused_tool_result(
+    tool_name: str,
+    message: str,
+    safety_reason: str | None = None,
+    plan_status: str | None = None,
+) -> ToolExecutionResult:
     """
     Build a refused tool result.
+
+    A plan-level refusal reason can override the lower-level registry reason
+    so CLI output explains the most important safety boundary first.
     """
     normalized_name = normalize_tool_name(tool_name)
+    safety_summary = get_tool_execution_safety(normalized_name)
+
+    if safety_reason:
+        safety_summary = {
+            **safety_summary,
+            "registry_reason": safety_summary.get("reason"),
+            "reason": safety_reason,
+            "plan_status": plan_status,
+            "execution_allowed": False,
+        }
 
     return ToolExecutionResult(
         tool_name=normalized_name,
         status=TOOL_EXECUTION_REFUSED,
         message=message,
         data=None,
-        safety_summary=get_tool_execution_safety(normalized_name),
+        safety_summary=safety_summary,
     )
+
+
+def get_plan_refusal_message(plan_status: str) -> str:
+    """
+    Return a clear plan-level refusal message.
+    """
+    if plan_status == "blocked":
+        return (
+            "This request contains a blocked action. Lighthouse will not execute it. "
+            "Safe alternatives are listed but were not run automatically."
+        )
+
+    if plan_status == "needs_confirmation":
+        return (
+            "This request requires explicit Operator confirmation. "
+            "The read-only executor cannot run confirmation-gated actions."
+        )
+
+    if plan_status == "needs_clarification":
+        return (
+            "This request needs clarification before Lighthouse can safely choose tools."
+        )
+
+    return "This plan is not approved for automatic read-only execution."
 
 
 def _execute_collect_snapshot(context: ToolExecutionContext) -> dict[str, Any]:
@@ -384,20 +426,21 @@ def execute_tool_plan(plan: ToolPlan) -> ToolPlanExecutionResult:
     safe_alternative_names = tuple(plan.safe_alternative_names())
 
     if plan.status != PLAN_STATUS_OK:
+        plan_refusal_message = get_plan_refusal_message(plan.status)
+
         refused_results = tuple(
             _refused_tool_result(
                 tool.name,
-                f"Tool was not executed because plan status is {plan.status}.",
+                f"Tool was not executed. {plan_refusal_message}",
+                safety_reason=plan_refusal_message,
+                plan_status=plan.status,
             )
             for tool in (*plan.tools, *plan.blocked_tools)
         )
 
         return ToolPlanExecutionResult(
             status=PLAN_EXECUTION_REFUSED,
-            message=(
-                "Plan was not executed because it is not an automatic "
-                "read-only plan."
-            ),
+            message=plan_refusal_message,
             plan_status=plan.status,
             intent=plan.intent,
             user_request=plan.user_request,

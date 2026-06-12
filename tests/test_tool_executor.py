@@ -315,6 +315,7 @@ def test_execute_tools_for_request_blocks_file_deletion(
     assert result.status == PLAN_EXECUTION_REFUSED
     assert result.plan_status == "blocked"
     assert result.intent == "blocked_file_deletion"
+    assert "blocked action" in result.message
     assert result.executed_tools == ()
     assert result.blocked_tools == ("delete_user_files",)
     assert result.safe_alternatives == (
@@ -337,6 +338,9 @@ def test_execute_tools_for_request_refuses_confirmation_plan(
     assert result.status == PLAN_EXECUTION_REFUSED
     assert result.plan_status == "needs_confirmation"
     assert result.intent == "close_process_request"
+    assert "explicit Operator confirmation" in result.message
+    assert "explicit Operator confirmation" in result.refused_tools[0].message
+    assert result.refused_tools[0].safety_summary["reason"] == result.message
     assert result.executed_tools == ()
     assert result.blocked_tools == ()
     assert result.safe_alternatives == (
