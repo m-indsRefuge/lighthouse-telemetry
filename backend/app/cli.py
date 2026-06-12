@@ -14,6 +14,11 @@ from app.services.assistant import classify_user_intent
 from app.services.insights import build_system_insight, format_insight_report
 from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
+from app.services.tool_executor import (
+    ToolExecutionResult,
+    ToolPlanExecutionResult,
+    execute_tools_for_request,
+)
 from app.services.tool_planner import ToolPlan, plan_tools_for_request
 
 
@@ -59,6 +64,7 @@ def print_help() -> None:
     print("insight     Show a plain-English Lighthouse assessment")
     print("explain     Alias for insight")
     print("plan <text> Show a safe Lighthouse tool plan")
+    print("runplan <text> Plan and execute safe read-only tools")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
     print("model test  Send a tiny safe test prompt to the local Ollama model")
@@ -82,6 +88,9 @@ def print_help() -> None:
     print("- plan please optimize RAM usage")
     print("- plan delete files to make space")
     print("- plan close Chrome because it is using memory")
+    print("- runplan please optimize RAM usage")
+    print("- runplan delete files to make space")
+    print("- runplan close Chrome because it is using memory")
 
 
 def print_health_report(telemetry: dict[str, Any]) -> None:
@@ -657,6 +666,171 @@ def print_tool_plan_report(user_request: str) -> None:
     print("=" * 52)
 
 
+def print_execution_data_summary(tool_name: str, data: dict[str, Any] | None) -> None:
+    """
+    Print a compact summary of read-only tool execution data.
+
+    This avoids dumping large raw telemetry dictionaries into the CLI.
+    """
+    if not data:
+        print("  Data: none")
+        return
+
+    if tool_name == "inspect_cpu_usage":
+        cpu = data.get("cpu", {})
+        print(f"  CPU usage: {cpu.get('usage_percent', 'Unknown')}%")
+        print(f"  CPU status: {cpu.get('status', 'unknown')}")
+        return
+
+    if tool_name == "inspect_memory_usage":
+        memory = data.get("memory", {})
+        print(f"  Memory usage: {memory.get('usage_percent', 'Unknown')}%")
+        print(f"  Used: {memory.get('used_gb', 'Unknown')} GB")
+        print(f"  Available: {memory.get('available_gb', 'Unknown')} GB")
+        return
+
+    if tool_name == "inspect_disk_usage":
+        disk = data.get("disk", {})
+        print(f"  Disk usage: {disk.get('usage_percent', 'Unknown')}%")
+        print(f"  Used: {disk.get('used_gb', 'Unknown')} GB")
+        print(f"  Free: {disk.get('free_gb', 'Unknown')} GB")
+        return
+
+    if tool_name == "list_top_processes":
+        processes = data.get("processes", {})
+        process_list = processes.get("processes", [])
+
+        if not process_list:
+            print("  No process data available.")
+            return
+
+        top = process_list[0]
+        print("  Top memory process:")
+        print(
+            f"  - {top.get('name', 'Unknown')} "
+            f"using {top.get('memory_mb', 'Unknown')} MB"
+        )
+        return
+
+    if tool_name == "read_recent_events":
+        event_report = data.get("event_report", {})
+        severity_summary = event_report.get("severity_summary", {})
+
+        print(f"  Event status: {event_report.get('status', 'unknown')}")
+        print(f"  Critical events: {severity_summary.get('critical', 0)}")
+        print(f"  Warning events: {severity_summary.get('warning', 0)}")
+        print(f"  Context events: {severity_summary.get('context', 0)}")
+        return
+
+    if tool_name == "show_health_summary":
+        insight = data.get("insight", {})
+        print(f"  Overall status: {insight.get('overall_status', 'UNKNOWN')}")
+        print(f"  Summary: {insight.get('summary', 'No summary available.')}")
+        return
+
+    if tool_name == "collect_snapshot":
+        insight = data.get("insight", {})
+        telemetry = data.get("telemetry", {})
+        cpu = telemetry.get("cpu", {})
+        memory = telemetry.get("memory", {})
+        disk = telemetry.get("disk", {})
+
+        print(f"  Overall status: {insight.get('overall_status', 'UNKNOWN')}")
+        print(f"  CPU usage: {cpu.get('usage_percent', 'Unknown')}%")
+        print(f"  Memory usage: {memory.get('usage_percent', 'Unknown')}%")
+        print(f"  Disk usage: {disk.get('usage_percent', 'Unknown')}%")
+        return
+
+    print(f"  Data keys: {', '.join(sorted(data.keys()))}")
+
+
+def print_tool_execution_results(
+    title: str,
+    results: tuple[ToolExecutionResult, ...],
+) -> None:
+    """
+    Print tool execution results.
+    """
+    print()
+    print(f"{title}:")
+    print("-" * 52)
+
+    if not results:
+        print("- none")
+        return
+
+    for result in results:
+        print(f"- {result.tool_name}")
+        print(f"  Status: {result.status}")
+        print(f"  Message: {result.message}")
+
+        if result.status == "executed":
+            print_execution_data_summary(result.tool_name, result.data)
+        else:
+            reason = result.safety_summary.get("reason")
+
+            if reason:
+                print(f"  Safety reason: {reason}")
+
+
+def print_runplan_report(user_request: str) -> None:
+    """
+    Plan a request and execute only safe read-only tools.
+
+    This never executes blocked tools, confirmation-required tools,
+    unimplemented tools, or OS-changing tools.
+    """
+    cleaned_request = user_request.strip()
+
+    print("\nLIGHTHOUSE RUN PLAN")
+    print("=" * 52)
+
+    if not cleaned_request:
+        print("Status: needs_clarification")
+        print("Message: Please provide a request after the runplan command.")
+        print()
+        print("Examples:")
+        print("- runplan please optimize RAM usage")
+        print("- runplan delete files to make space")
+        print("- runplan close Chrome because it is using memory")
+        print("=" * 52)
+        return
+
+    result: ToolPlanExecutionResult = execute_tools_for_request(cleaned_request)
+
+    print(f"Request: {result.user_request}")
+    print(f"Execution status: {result.status}")
+    print(f"Plan status: {result.plan_status}")
+    print(f"Intent: {result.intent}")
+    print()
+    print(f"Message: {result.message}")
+
+    print_tool_execution_results("Executed tools", result.executed_tools)
+    print_tool_execution_results("Refused tools", result.refused_tools)
+
+    print()
+    print("Blocked tools:")
+    print("-" * 52)
+
+    if result.blocked_tools:
+        for tool_name in result.blocked_tools:
+            print(f"- {tool_name}")
+    else:
+        print("- none")
+
+    print()
+    print("Safe alternatives:")
+    print("-" * 52)
+
+    if result.safe_alternatives:
+        for tool_name in result.safe_alternatives:
+            print(f"- {tool_name}")
+    else:
+        print("- none")
+
+    print("=" * 52)
+
+
 def run_canonical_command(command: str) -> str:
     """
     Run a known Lighthouse command.
@@ -684,6 +858,15 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("plan "):
         plan_request = cleaned_command[5:].strip()
         print_tool_plan_report(plan_request)
+        return "handled"
+
+    if normalized_command == "runplan":
+        print_runplan_report("")
+        return "handled"
+
+    if normalized_command.startswith("runplan "):
+        runplan_request = cleaned_command[8:].strip()
+        print_runplan_report(runplan_request)
         return "handled"
 
     if normalized_command in {"snapshot", "report"}:
