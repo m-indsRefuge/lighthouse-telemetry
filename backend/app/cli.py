@@ -10,6 +10,11 @@ from typing import Any
 from app.collectors.event_logs import get_recent_system_events
 from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
+from app.services.action_journal import (
+    format_journal_report,
+    read_journal_entries,
+    record_plan_execution,
+)
 from app.services.assistant import classify_user_intent
 from app.services.insights import build_system_insight, format_insight_report
 from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
@@ -65,6 +70,7 @@ def print_help() -> None:
     print("explain     Alias for insight")
     print("plan <text> Show a safe Lighthouse tool plan")
     print("runplan <text> Plan and execute safe read-only tools")
+    print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
     print("model test  Send a tiny safe test prompt to the local Ollama model")
@@ -91,6 +97,7 @@ def print_help() -> None:
     print("- runplan please optimize RAM usage")
     print("- runplan delete files to make space")
     print("- runplan close Chrome because it is using memory")
+    print("- journal")
 
 
 def print_health_report(telemetry: dict[str, Any]) -> None:
@@ -797,6 +804,7 @@ def print_runplan_report(user_request: str) -> None:
         return
 
     result: ToolPlanExecutionResult = execute_tools_for_request(cleaned_request)
+    journal_result = record_plan_execution(result)
 
     print(f"Request: {result.user_request}")
     print(f"Execution status: {result.status}")
@@ -828,7 +836,23 @@ def print_runplan_report(user_request: str) -> None:
     else:
         print("- none")
 
+    print()
+    print("Journal:")
+    print("-" * 52)
+    print(f"Status: {journal_result.status}")
+    print(f"Message: {journal_result.message}")
+    print(f"Path: {journal_result.path}")
+
     print("=" * 52)
+
+
+def print_journal_report(limit: int = 10) -> None:
+    """
+    Print recent Lighthouse action journal entries.
+    """
+    read_result = read_journal_entries(limit=limit)
+
+    print(format_journal_report(read_result))
 
 
 def run_canonical_command(command: str) -> str:
@@ -867,6 +891,10 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("runplan "):
         runplan_request = cleaned_command[8:].strip()
         print_runplan_report(runplan_request)
+        return "handled"
+
+    if normalized_command in {"journal", "action journal", "audit", "audit log"}:
+        print_journal_report()
         return "handled"
 
     if normalized_command in {"snapshot", "report"}:
