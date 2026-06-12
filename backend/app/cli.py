@@ -14,6 +14,7 @@ from app.services.assistant import classify_user_intent
 from app.services.insights import build_system_insight, format_insight_report
 from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
+from app.services.tool_planner import ToolPlan, plan_tools_for_request
 
 
 def classify_percent(value: Any, warning_at: float, critical_at: float) -> str:
@@ -34,6 +35,13 @@ def classify_percent(value: Any, warning_at: float, critical_at: float) -> str:
     return "OK"
 
 
+def yes_no(value: bool) -> str:
+    """
+    Convert a boolean into a human-readable yes/no value.
+    """
+    return "yes" if value else "no"
+
+
 def print_help() -> None:
     """
     Print available Lighthouse commands.
@@ -50,6 +58,7 @@ def print_help() -> None:
     print("slow        Alias for diagnose")
     print("insight     Show a plain-English Lighthouse assessment")
     print("explain     Alias for insight")
+    print("plan <text> Show a safe Lighthouse tool plan")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
     print("model test  Send a tiny safe test prompt to the local Ollama model")
@@ -70,6 +79,9 @@ def print_help() -> None:
     print("- show me the last report")
     print("- ask is anything wrong with my laptop?")
     print("- ask why does my laptop feel slow?")
+    print("- plan please optimize RAM usage")
+    print("- plan delete files to make space")
+    print("- plan close Chrome because it is using memory")
 
 
 def print_health_report(telemetry: dict[str, Any]) -> None:
@@ -581,6 +593,70 @@ def print_model_test_report() -> None:
     print("=" * 52)
 
 
+def print_tool_list(title: str, tools: tuple[Any, ...]) -> None:
+    """
+    Print a list of planned tool records.
+    """
+    print()
+    print(f"{title}:")
+    print("-" * 52)
+
+    if not tools:
+        print("- none")
+        return
+
+    for tool in tools:
+        print(f"- {tool.name}")
+        print(f"  Reason: {tool.reason}")
+        print(f"  Category: {tool.category}")
+        print(f"  Risk level: {tool.risk_level}")
+        print(f"  Read-only: {yes_no(tool.read_only)}")
+        print(f"  Implemented: {yes_no(tool.implemented)}")
+        print(f"  Automatic use allowed: {yes_no(tool.allow_automatic_use)}")
+        print(f"  Requires confirmation: {yes_no(tool.requires_confirmation)}")
+        print(f"  Requires target: {yes_no(tool.requires_target)}")
+        print(f"  Logs action: {yes_no(tool.logs_action)}")
+
+
+def print_tool_plan_report(user_request: str) -> None:
+    """
+    Print a Lighthouse tool plan for a user request.
+
+    This does not execute tools.
+    It only shows what the planner would select or block.
+    """
+    cleaned_request = user_request.strip()
+
+    print("\nLIGHTHOUSE TOOL PLAN")
+    print("=" * 52)
+
+    if not cleaned_request:
+        print("Status: needs_clarification")
+        print("Message: Please provide a request after the plan command.")
+        print()
+        print("Examples:")
+        print("- plan please optimize RAM usage")
+        print("- plan delete files to make space")
+        print("- plan close Chrome because it is using memory")
+        print("=" * 52)
+        return
+
+    plan: ToolPlan = plan_tools_for_request(cleaned_request)
+
+    print(f"Request: {plan.user_request}")
+    print(f"Status: {plan.status}")
+    print(f"Intent: {plan.intent}")
+    print(f"Requires confirmation: {yes_no(plan.requires_confirmation)}")
+    print()
+    print(f"Message: {plan.message}")
+
+    print_tool_list("Planned tools", plan.tools)
+    print_tool_list("Blocked tools", plan.blocked_tools)
+    print_tool_list("Safe alternatives", plan.safe_alternatives)
+
+    print("=" * 52)
+
+
 def run_canonical_command(command: str) -> str:
     """
     Run a known Lighthouse command.
@@ -590,74 +666,86 @@ def run_canonical_command(command: str) -> str:
         exit: command was handled and the loop should exit
         unknown: command was not recognized
     """
-    if command in {"quit", "exit", "q"}:
+    cleaned_command = command.strip()
+    normalized_command = cleaned_command.lower()
+
+    if normalized_command in {"quit", "exit", "q"}:
         print("Exiting Lighthouse.")
         return "exit"
 
-    if command in {"help", "h", "?"}:
+    if normalized_command in {"help", "h", "?"}:
         print_help()
         return "handled"
 
-    if command in {"snapshot", "report"}:
+    if normalized_command == "plan":
+        print_tool_plan_report("")
+        return "handled"
+
+    if normalized_command.startswith("plan "):
+        plan_request = cleaned_command[5:].strip()
+        print_tool_plan_report(plan_request)
+        return "handled"
+
+    if normalized_command in {"snapshot", "report"}:
         telemetry = collect_telemetry()
         print_console_report(telemetry)
         return "handled"
 
-    if command == "health":
+    if normalized_command == "health":
         telemetry = collect_telemetry()
         print_health_report(telemetry)
         return "handled"
 
-    if command == "cpu":
+    if normalized_command == "cpu":
         telemetry = collect_telemetry()
         print_cpu_report(telemetry)
         return "handled"
 
-    if command == "memory":
+    if normalized_command == "memory":
         telemetry = collect_telemetry()
         print_memory_report(telemetry)
         return "handled"
 
-    if command == "disk":
+    if normalized_command == "disk":
         telemetry = collect_telemetry()
         print_disk_report(telemetry)
         return "handled"
 
-    if command in {"processes", "process"}:
+    if normalized_command in {"processes", "process"}:
         telemetry = collect_telemetry()
         print_process_report(telemetry)
         return "handled"
 
-    if command in {"diagnose", "slow"}:
+    if normalized_command in {"diagnose", "slow"}:
         telemetry = collect_telemetry()
         print_diagnosis(telemetry)
         return "handled"
 
-    if command in {"insight", "explain", "assessment", "assistant"}:
+    if normalized_command in {"insight", "explain", "assessment", "assistant"}:
         print_insight_report()
         return "handled"
 
-    if command in {"model test", "models test", "llm test", "ollama test"}:
+    if normalized_command in {"model test", "models test", "llm test", "ollama test"}:
         print_model_test_report()
         return "handled"
 
-    if command in {"model", "models", "llm", "ollama"}:
+    if normalized_command in {"model", "models", "llm", "ollama"}:
         print_model_report()
         return "handled"
 
-    if command in {"events", "event", "crash", "crashes"}:
+    if normalized_command in {"events", "event", "crash", "crashes"}:
         print_events_report()
         return "handled"
 
-    if command in {"save", "save snapshot", "save report"}:
+    if normalized_command in {"save", "save snapshot", "save report"}:
         print_save_report()
         return "handled"
 
-    if command in {"history", "snapshots"}:
+    if normalized_command in {"history", "snapshots"}:
         print_history_report()
         return "handled"
 
-    if command in {"last", "latest", "last snapshot"}:
+    if normalized_command in {"last", "latest", "last snapshot"}:
         print_last_snapshot_report()
         return "handled"
 
@@ -690,7 +778,7 @@ def command_loop() -> None:
             print_ask_report(question)
             continue
 
-        result = run_canonical_command(command)
+        result = run_canonical_command(user_input)
 
         if result == "exit":
             break
