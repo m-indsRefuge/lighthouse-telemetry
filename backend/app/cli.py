@@ -16,6 +16,10 @@ from app.services.action_journal import (
     record_plan_execution,
 )
 from app.services.assistant import classify_user_intent
+from app.services.confirmation_gate import (
+    build_confirmation_request,
+    format_confirmation_request,
+)
 from app.services.insights import build_system_insight, format_insight_report
 from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
@@ -780,6 +784,33 @@ def print_tool_execution_results(
                 print(f"  Safety reason: {reason}")
 
 
+def print_confirmation_previews(result: ToolPlanExecutionResult) -> None:
+    """
+    Print confirmation-gate previews for confirmation-required plans.
+
+    This is only a preview. It does not accept confirmation input and does not
+    execute OS-changing tools.
+    """
+    if result.plan_status != "needs_confirmation":
+        return
+
+    print()
+    print("Confirmation gate preview:")
+    print("-" * 52)
+    print(
+        "This is a preview only. Lighthouse will not execute "
+        "confirmation-gated tools from runplan."
+    )
+
+    if not result.refused_tools:
+        print("- No refused confirmation-gated tools were returned.")
+        return
+
+    for refused_tool in result.refused_tools:
+        request = build_confirmation_request(refused_tool.tool_name)
+        print(format_confirmation_request(request))
+
+
 def print_runplan_report(user_request: str) -> None:
     """
     Plan a request and execute only safe read-only tools.
@@ -835,6 +866,8 @@ def print_runplan_report(user_request: str) -> None:
             print(f"- {tool_name}")
     else:
         print("- none")
+
+    print_confirmation_previews(result)
 
     print()
     print("Journal:")
