@@ -30,6 +30,46 @@ DEFAULT_OLLAMA_MODEL = "qwen2.5:3b"
 OLLAMA_TIMEOUT_SECONDS = 30
 OLLAMA_STATUS_TIMEOUT_SECONDS = 5
 
+REQUIRED_OLLAMA_ANSWER_SECTIONS = [
+    "direct answer",
+    "evidence",
+    "limit of this snapshot",
+    "next step",
+]
+
+BLOCKED_OLLAMA_ANSWER_PHRASES = [
+    "delete files",
+    "deleting files",
+    "kill process",
+    "killing process",
+    "end task",
+    "force close",
+    "edit registry",
+    "registry editor",
+    "disable services",
+    "disabling services",
+    "change drivers",
+    "update drivers",
+    "changing drivers",
+    "change windows settings",
+    "changing windows settings",
+    "scan for viruses",
+    "scanning for viruses",
+    "run antivirus",
+    "update software",
+    "updating software",
+    "restart your computer",
+    "restarting your computer",
+    "contact a professional",
+    "contacting a professional",
+    "please contact",
+    "let me know",
+    "for further assistance",
+    "definitely fine",
+    "guaranteed",
+    "guarantee",
+]
+
 
 def is_ollama_enabled() -> bool:
     """
@@ -159,6 +199,72 @@ Required answer structure:
 """.strip()
 
     return prompt
+
+
+def validate_ollama_answer(answer: str) -> dict[str, Any]:
+    """
+    Validate an Ollama-generated answer against Lighthouse response policy.
+
+    This is a safety and quality gate. If the model answer does not follow
+    the required Lighthouse structure, or if it includes blocked phrases,
+    Lighthouse should fall back to the deterministic insight engine answer.
+    """
+    cleaned_answer = answer.strip()
+
+    if not cleaned_answer:
+        return {
+            "status": "error",
+            "valid": False,
+            "reason": "Ollama returned an empty answer.",
+            "missing_sections": REQUIRED_OLLAMA_ANSWER_SECTIONS,
+            "blocked_phrases": [],
+        }
+
+    normalized_answer = cleaned_answer.lower()
+
+    missing_sections = [
+        section
+        for section in REQUIRED_OLLAMA_ANSWER_SECTIONS
+        if section not in normalized_answer
+    ]
+
+    blocked_phrases = [
+        phrase
+        for phrase in BLOCKED_OLLAMA_ANSWER_PHRASES
+        if phrase in normalized_answer
+    ]
+
+    if missing_sections:
+        return {
+            "status": "error",
+            "valid": False,
+            "reason": (
+                "Ollama response failed Lighthouse policy validation: "
+                "missing required section(s)."
+            ),
+            "missing_sections": missing_sections,
+            "blocked_phrases": blocked_phrases,
+        }
+
+    if blocked_phrases:
+        return {
+            "status": "error",
+            "valid": False,
+            "reason": (
+                "Ollama response failed Lighthouse policy validation: "
+                "blocked phrase detected."
+            ),
+            "missing_sections": missing_sections,
+            "blocked_phrases": blocked_phrases,
+        }
+
+    return {
+        "status": "ok",
+        "valid": True,
+        "reason": "Ollama response passed Lighthouse policy validation.",
+        "missing_sections": [],
+        "blocked_phrases": [],
+    }
 
 
 def call_ollama(prompt: str) -> dict[str, Any]:
@@ -503,21 +609,53 @@ def ask_lighthouse(user_question: str) -> dict[str, Any]:
             ollama_result = call_ollama(prompt)
 
             if ollama_result.get("status") == "ok":
-                answer = format_ollama_answer(
+                validation = validate_ollama_answer(
+                    ollama_result.get("answer", ""),
+                )
+
+                if validation.get("valid", False):
+                    answer = format_ollama_answer(
+                        user_question=cleaned_question,
+                        ollama_answer=ollama_result.get("answer", ""),
+                        model=ollama_result.get("model", get_ollama_model()),
+                        insight=insight,
+                    )
+
+                    return {
+                        "status": "ok",
+                        "provider": "ollama",
+                        "model": ollama_result.get("model", get_ollama_model()),
+                        "uses_external_ai": False,
+                        "used_fallback": False,
+                        "ollama_attempted": True,
+                        "fallback_reason": None,
+                        "validation": validation,
+                        "question": cleaned_question,
+                        "answer": answer,
+                        "insight": insight,
+                    }
+
+                fallback_reason = validation.get(
+                    "reason",
+                    "Ollama response failed Lighthouse policy validation.",
+                )
+                answer = format_lighthouse_answer(
                     user_question=cleaned_question,
-                    ollama_answer=ollama_result.get("answer", ""),
-                    model=ollama_result.get("model", get_ollama_model()),
                     insight=insight,
+                    ollama_attempted=True,
+                    fallback_reason=fallback_reason,
                 )
 
                 return {
                     "status": "ok",
-                    "provider": "ollama",
-                    "model": ollama_result.get("model", get_ollama_model()),
+                    "provider": "lighthouse_insight_engine",
+                    "model": "deterministic_fallback",
                     "uses_external_ai": False,
-                    "used_fallback": False,
+                    "used_fallback": True,
                     "ollama_attempted": True,
-                    "fallback_reason": None,
+                    "fallback_reason": fallback_reason,
+                    "ollama_model": ollama_result.get("model", get_ollama_model()),
+                    "validation": validation,
                     "question": cleaned_question,
                     "answer": answer,
                     "insight": insight,
@@ -543,6 +681,7 @@ def ask_lighthouse(user_question: str) -> dict[str, Any]:
                 "ollama_attempted": True,
                 "fallback_reason": fallback_reason,
                 "ollama_model": ollama_result.get("model", get_ollama_model()),
+                "validation": None,
                 "question": cleaned_question,
                 "answer": answer,
                 "insight": insight,
@@ -561,6 +700,7 @@ def ask_lighthouse(user_question: str) -> dict[str, Any]:
             "used_fallback": True,
             "ollama_attempted": False,
             "fallback_reason": None,
+            "validation": None,
             "question": cleaned_question,
             "answer": answer,
             "insight": insight,
