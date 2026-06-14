@@ -20,6 +20,7 @@ from app.services.confirmation_gate import (
     build_confirmation_request,
     format_confirmation_request,
 )
+from app.services.confirmation_journal import record_target_confirmation_preview
 from app.services.insights import build_system_insight, format_insight_report
 from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
@@ -833,6 +834,20 @@ def print_confirmation_previews(result: ToolPlanExecutionResult) -> None:
         )
 
         print(format_confirmation_request(confirmation_request))
+
+        preview_journal_result = record_target_confirmation_preview(
+            user_request=result.user_request,
+            tool_name=refused_tool.tool_name,
+            target_resolution=target_resolution,
+            confirmation_request=confirmation_request,
+        )
+
+        print()
+        print("Confirmation preview journal:")
+        print("-" * 52)
+        print(f"Status: {preview_journal_result.status}")
+        print(f"Message: {preview_journal_result.message}")
+        print(f"Path: {preview_journal_result.path}")
 
 
 def print_runplan_report(user_request: str) -> None:
