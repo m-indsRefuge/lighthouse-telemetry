@@ -919,6 +919,60 @@ def print_engine_errors(engine_result: LighthouseEngineResult) -> None:
         print(f"- {error}")
 
 
+def print_memory_context_summary(engine_result: LighthouseEngineResult) -> None:
+    """
+    Print a compact memory-context summary from Lighthouse Engine.
+
+    This does not print the full memory context block by default.
+    The full context is intended for engine/model use and future debug views.
+    """
+    memory_context = getattr(engine_result, "memory_context", None)
+
+    print()
+    print("Memory context:")
+    print("-" * 52)
+
+    if memory_context is None:
+        print("Status: not_available")
+        print("Message: No memory context was returned by Lighthouse Engine.")
+        return
+
+    print(f"Status: {memory_context.status}")
+    print(f"Enabled: {yes_no(memory_context.enabled)}")
+    print(f"Message: {memory_context.message}")
+
+    summary = memory_context.summary
+
+    if summary is None:
+        print("Baselines: 0")
+        print("Operator preferences: 0")
+        print("Relevant cases: 0")
+        print("Knowledge entries: 0")
+    else:
+        print(f"Baselines: {summary.baseline_count}")
+        print(f"Operator preferences: {summary.preference_count}")
+        print(f"Relevant cases: {summary.case_count}")
+        print(f"Knowledge entries: {summary.knowledge_count}")
+
+    if memory_context.warnings:
+        print()
+        print("Memory warnings:")
+
+        for warning in memory_context.warnings:
+            print(f"- {warning}")
+
+    if memory_context.errors:
+        print()
+        print("Memory errors:")
+
+        for error in memory_context.errors:
+            print(f"- {error}")
+
+    if memory_context.context_text.strip() and summary is not None:
+        print()
+        print("Full memory context: available to engine, hidden in normal CLI output.")
+
+
 def print_plan_journal_result(engine_result: LighthouseEngineResult) -> None:
     """
     Print the plan-level journal result returned by Lighthouse Engine.
@@ -943,7 +997,8 @@ def print_runplan_report(user_request: str) -> None:
     Run a request through Lighthouse Engine v1.
 
     The engine coordinates planning, safe read-only execution, target
-    resolution, confirmation preview generation, and journaling.
+    resolution, confirmation preview generation, memory-context summarization,
+    and journaling.
 
     It still does not execute blocked tools, confirmation-required tools,
     unimplemented tools, or OS-changing tools.
@@ -976,6 +1031,7 @@ def print_runplan_report(user_request: str) -> None:
     print(f"Message: {engine_result.message}")
 
     print_engine_errors(engine_result)
+    print_memory_context_summary(engine_result)
 
     if execution_result is None:
         print_tool_execution_results("Executed tools", ())
@@ -1150,6 +1206,7 @@ def command_loop() -> None:
     print("Read-only system telemetry assistant.")
     print("Type 'help' to see available commands.")
     print("Type 'quit' to exit.")
+    print("minds_Refuge")
 
     while True:
         user_input = input("\nlighthouse> ").strip()
