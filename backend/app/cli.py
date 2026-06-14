@@ -23,6 +23,11 @@ from app.services.confirmation_gate import (
 from app.services.insights import build_system_insight, format_insight_report
 from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
+from app.services.target_resolver import (
+    TARGET_STATUS_CANDIDATE_FOUND,
+    format_target_resolution,
+    resolve_target_for_tool,
+)
 from app.services.tool_executor import (
     ToolExecutionResult,
     ToolPlanExecutionResult,
@@ -786,7 +791,7 @@ def print_tool_execution_results(
 
 def print_confirmation_previews(result: ToolPlanExecutionResult) -> None:
     """
-    Print confirmation-gate previews for confirmation-required plans.
+    Print target-aware confirmation-gate previews for confirmation-required plans.
 
     This is only a preview. It does not accept confirmation input and does not
     execute OS-changing tools.
@@ -807,8 +812,27 @@ def print_confirmation_previews(result: ToolPlanExecutionResult) -> None:
         return
 
     for refused_tool in result.refused_tools:
-        request = build_confirmation_request(refused_tool.tool_name)
-        print(format_confirmation_request(request))
+        target_resolution = resolve_target_for_tool(
+            tool_name=refused_tool.tool_name,
+            user_request=result.user_request,
+        )
+
+        print(format_target_resolution(target_resolution))
+
+        target = None
+
+        if (
+            target_resolution.status == TARGET_STATUS_CANDIDATE_FOUND
+            and target_resolution.target
+        ):
+            target = target_resolution.target
+
+        confirmation_request = build_confirmation_request(
+            tool_name=refused_tool.tool_name,
+            target=target,
+        )
+
+        print(format_confirmation_request(confirmation_request))
 
 
 def print_runplan_report(user_request: str) -> None:
