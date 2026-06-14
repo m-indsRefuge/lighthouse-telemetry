@@ -11,15 +11,18 @@ It coordinates the existing safe components:
 - confirmation preview generation
 - action journaling
 - confirmation preview journaling
+- read-only memory context retrieval/summarization
 
 It does not execute OS-changing tools.
 It does not accept confirmation input.
 It does not close processes, delete files, edit settings, or mutate the OS.
+It does not call the model directly.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from app.services.action_journal import record_plan_execution
@@ -28,6 +31,10 @@ from app.services.confirmation_gate import (
     build_confirmation_request,
 )
 from app.services.confirmation_journal import record_target_confirmation_preview
+from app.services.engine_memory_context import (
+    EngineMemoryContext,
+    build_engine_memory_context,
+)
 from app.services.target_resolver import (
     TARGET_STATUS_CANDIDATE_FOUND,
     TargetResolution,
@@ -90,6 +97,7 @@ class LighthouseEngineResult:
     confirmation_previews: tuple[LighthouseConfirmationPreview, ...]
     plan_journal_result: Any | None
     errors: tuple[str, ...]
+    memory_context: EngineMemoryContext | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """
@@ -110,6 +118,7 @@ class LighthouseEngineResult:
             "plan_journal_result": journal_result_to_dict(
                 self.plan_journal_result
             ),
+            "memory_context": memory_context_to_dict(self.memory_context),
             "errors": list(self.errors),
         }
 
@@ -126,6 +135,18 @@ def journal_result_to_dict(journal_result: Any | None) -> dict[str, Any] | None:
         "message": getattr(journal_result, "message", ""),
         "path": str(getattr(journal_result, "path", "")),
     }
+
+
+def memory_context_to_dict(
+    memory_context: EngineMemoryContext | None,
+) -> dict[str, Any] | None:
+    """
+    Convert engine memory context into a serializable shape.
+    """
+    if memory_context is None:
+        return None
+
+    return memory_context.to_dict()
 
 
 def confirmation_request_to_dict(
@@ -237,13 +258,36 @@ def build_confirmation_previews(
     return tuple(previews)
 
 
-def run_lighthouse_engine(user_request: str) -> LighthouseEngineResult:
+def collect_memory_context_errors(
+    memory_context: EngineMemoryContext | None,
+) -> tuple[str, ...]:
+    """
+    Collect memory-context errors in engine-safe form.
+    """
+    if memory_context is None:
+        return ()
+
+    return tuple(
+        f"Memory context error: {error}"
+        for error in memory_context.errors
+    )
+
+
+def run_lighthouse_engine(
+    user_request: str,
+    *,
+    include_memory_context: bool = True,
+    memory_dir: Path | str | None = None,
+) -> LighthouseEngineResult:
     """
     Run Lighthouse Engine v1 for a single Operator request.
 
     This currently supports the same safety boundary as runplan:
     safe read-only tools may execute, but confirmation-gated and blocked tools
     are not executed.
+
+    Memory context is read-only. It may retrieve and summarize Lighthouse memory,
+    but it does not write memory, execute actions, or call the model.
     """
     cleaned_request = user_request.strip()
 
@@ -258,10 +302,18 @@ def run_lighthouse_engine(user_request: str) -> LighthouseEngineResult:
             execution_result=None,
             confirmation_previews=(),
             plan_journal_result=None,
+            memory_context=None,
             errors=(),
         )
 
     errors: list[str] = []
+
+    memory_context = build_engine_memory_context(
+        cleaned_request,
+        enabled=include_memory_context,
+        memory_dir=memory_dir,
+    )
+    errors.extend(collect_memory_context_errors(memory_context))
 
     try:
         execution_result = execute_tools_for_request(cleaned_request)
@@ -276,7 +328,8 @@ def run_lighthouse_engine(user_request: str) -> LighthouseEngineResult:
             execution_result=None,
             confirmation_previews=(),
             plan_journal_result=None,
-            errors=(str(error),),
+            memory_context=memory_context,
+            errors=tuple(errors + [str(error)]),
         )
 
     try:
@@ -301,5 +354,6 @@ def run_lighthouse_engine(user_request: str) -> LighthouseEngineResult:
         execution_result=execution_result,
         confirmation_previews=confirmation_previews,
         plan_journal_result=plan_journal_result,
+        memory_context=memory_context,
         errors=tuple(errors),
     )
