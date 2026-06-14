@@ -13,7 +13,6 @@ from app.reporting.console_report import print_console_report
 from app.services.action_journal import (
     format_journal_report,
     read_journal_entries,
-    record_plan_execution,
 )
 from app.services.assistant import classify_user_intent
 from app.services.confirmation_gate import (
@@ -22,6 +21,10 @@ from app.services.confirmation_gate import (
 )
 from app.services.confirmation_journal import record_target_confirmation_preview
 from app.services.insights import build_system_insight, format_insight_report
+from app.services.lighthouse_engine import (
+    LighthouseEngineResult,
+    run_lighthouse_engine,
+)
 from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 from app.services.target_resolver import (
@@ -29,11 +32,7 @@ from app.services.target_resolver import (
     format_target_resolution,
     resolve_target_for_tool,
 )
-from app.services.tool_executor import (
-    ToolExecutionResult,
-    ToolPlanExecutionResult,
-    execute_tools_for_request,
-)
+from app.services.tool_executor import ToolExecutionResult
 from app.services.tool_planner import ToolPlan, plan_tools_for_request
 
 
@@ -79,7 +78,7 @@ def print_help() -> None:
     print("insight     Show a plain-English Lighthouse assessment")
     print("explain     Alias for insight")
     print("plan <text> Show a safe Lighthouse tool plan")
-    print("runplan <text> Plan and execute safe read-only tools")
+    print("runplan <text> Run a request through Lighthouse Engine v1")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -790,12 +789,67 @@ def print_tool_execution_results(
                 print(f"  Safety reason: {reason}")
 
 
-def print_confirmation_previews(result: ToolPlanExecutionResult) -> None:
+def print_confirmation_previews(result: Any) -> None:
     """
-    Print target-aware confirmation-gate previews for confirmation-required plans.
+    Print confirmation previews.
 
-    This is only a preview. It does not accept confirmation input and does not
-    execute OS-changing tools.
+    When called with a LighthouseEngineResult, this prints the engine-produced
+    confirmation previews without rebuilding or re-journaling them.
+
+    The fallback path keeps older CLI tests compatible with the earlier
+    ToolPlanExecutionResult shape.
+    """
+    if isinstance(result, LighthouseEngineResult):
+        print_engine_confirmation_previews(result)
+        return
+
+    print_legacy_confirmation_previews(result)
+
+
+def print_engine_confirmation_previews(engine_result: LighthouseEngineResult) -> None:
+    """
+    Print confirmation previews that were already produced by Lighthouse Engine.
+    """
+    if engine_result.plan_status != "needs_confirmation":
+        return
+
+    print()
+    print("Confirmation gate preview:")
+    print("-" * 52)
+    print(
+        "This is a preview only. Lighthouse will not execute "
+        "confirmation-gated tools from runplan."
+    )
+
+    if not engine_result.confirmation_previews:
+        print("- No confirmation previews were returned by Lighthouse Engine.")
+        return
+
+    for preview in engine_result.confirmation_previews:
+        print(format_target_resolution(preview.target_resolution))
+        print(format_confirmation_request(preview.confirmation_request))
+
+        print()
+        print("Confirmation preview journal:")
+        print("-" * 52)
+
+        if preview.journal_result is None:
+            print("Status: not_recorded")
+            print("Message: No confirmation preview journal result was returned.")
+            print("Path: unknown")
+        else:
+            print(f"Status: {preview.journal_result.status}")
+            print(f"Message: {preview.journal_result.message}")
+            print(f"Path: {preview.journal_result.path}")
+
+
+def print_legacy_confirmation_previews(result: Any) -> None:
+    """
+    Print target-aware confirmation-gate previews for older direct callers.
+
+    This path is kept only so existing tests or callers that pass a
+    ToolPlanExecutionResult-like object still work. The live runplan command now
+    uses Lighthouse Engine instead.
     """
     if result.plan_status != "needs_confirmation":
         return
@@ -850,11 +904,48 @@ def print_confirmation_previews(result: ToolPlanExecutionResult) -> None:
         print(f"Path: {preview_journal_result.path}")
 
 
+def print_engine_errors(engine_result: LighthouseEngineResult) -> None:
+    """
+    Print non-fatal engine warnings or errors.
+    """
+    if not engine_result.errors:
+        return
+
+    print()
+    print("Engine warnings:")
+    print("-" * 52)
+
+    for error in engine_result.errors:
+        print(f"- {error}")
+
+
+def print_plan_journal_result(engine_result: LighthouseEngineResult) -> None:
+    """
+    Print the plan-level journal result returned by Lighthouse Engine.
+    """
+    print()
+    print("Journal:")
+    print("-" * 52)
+
+    if engine_result.plan_journal_result is None:
+        print("Status: not_recorded")
+        print("Message: No plan journal result was returned.")
+        print("Path: unknown")
+        return
+
+    print(f"Status: {engine_result.plan_journal_result.status}")
+    print(f"Message: {engine_result.plan_journal_result.message}")
+    print(f"Path: {engine_result.plan_journal_result.path}")
+
+
 def print_runplan_report(user_request: str) -> None:
     """
-    Plan a request and execute only safe read-only tools.
+    Run a request through Lighthouse Engine v1.
 
-    This never executes blocked tools, confirmation-required tools,
+    The engine coordinates planning, safe read-only execution, target
+    resolution, confirmation preview generation, and journaling.
+
+    It still does not execute blocked tools, confirmation-required tools,
     unimplemented tools, or OS-changing tools.
     """
     cleaned_request = user_request.strip()
@@ -873,25 +964,47 @@ def print_runplan_report(user_request: str) -> None:
         print("=" * 52)
         return
 
-    result: ToolPlanExecutionResult = execute_tools_for_request(cleaned_request)
-    journal_result = record_plan_execution(result)
+    engine_result = run_lighthouse_engine(cleaned_request)
+    execution_result = engine_result.execution_result
 
-    print(f"Request: {result.user_request}")
-    print(f"Execution status: {result.status}")
-    print(f"Plan status: {result.plan_status}")
-    print(f"Intent: {result.intent}")
+    print(f"Request: {engine_result.user_request}")
+    print(f"Engine status: {engine_result.status}")
+    print(f"Execution status: {engine_result.execution_status}")
+    print(f"Plan status: {engine_result.plan_status}")
+    print(f"Intent: {engine_result.intent}")
     print()
-    print(f"Message: {result.message}")
+    print(f"Message: {engine_result.message}")
 
-    print_tool_execution_results("Executed tools", result.executed_tools)
-    print_tool_execution_results("Refused tools", result.refused_tools)
+    print_engine_errors(engine_result)
+
+    if execution_result is None:
+        print_tool_execution_results("Executed tools", ())
+        print_tool_execution_results("Refused tools", ())
+
+        print()
+        print("Blocked tools:")
+        print("-" * 52)
+        print("- none")
+
+        print()
+        print("Safe alternatives:")
+        print("-" * 52)
+        print("- none")
+
+        print_plan_journal_result(engine_result)
+
+        print("=" * 52)
+        return
+
+    print_tool_execution_results("Executed tools", execution_result.executed_tools)
+    print_tool_execution_results("Refused tools", execution_result.refused_tools)
 
     print()
     print("Blocked tools:")
     print("-" * 52)
 
-    if result.blocked_tools:
-        for tool_name in result.blocked_tools:
+    if execution_result.blocked_tools:
+        for tool_name in execution_result.blocked_tools:
             print(f"- {tool_name}")
     else:
         print("- none")
@@ -900,20 +1013,14 @@ def print_runplan_report(user_request: str) -> None:
     print("Safe alternatives:")
     print("-" * 52)
 
-    if result.safe_alternatives:
-        for tool_name in result.safe_alternatives:
+    if execution_result.safe_alternatives:
+        for tool_name in execution_result.safe_alternatives:
             print(f"- {tool_name}")
     else:
         print("- none")
 
-    print_confirmation_previews(result)
-
-    print()
-    print("Journal:")
-    print("-" * 52)
-    print(f"Status: {journal_result.status}")
-    print(f"Message: {journal_result.message}")
-    print(f"Path: {journal_result.path}")
+    print_confirmation_previews(engine_result)
+    print_plan_journal_result(engine_result)
 
     print("=" * 52)
 
