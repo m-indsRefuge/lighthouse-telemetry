@@ -14,12 +14,21 @@ BACKEND_PATH = PROJECT_ROOT / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
+from app.services.memory_cases import (
+    CASE_CONFIDENCE_HIGH,
+    CASE_SOURCE_OPERATOR_CONFIRMED,
+    MEMORY_INFLUENCE_SUPPORTING_EVIDENCE,
+    MEMORY_RESULT_HELPFUL,
+    build_memory_usage_trace,
+)
+from app.services.memory_manager import build_case_memory
 from app.services.memory_retriever import (
     MEMORY_RETRIEVER_STATUS_OK,
     MemoryRetrievalQuery,
     extract_keywords,
     filter_and_rank_entries,
     normalize_keywords,
+    prepare_case_entries_for_retrieval,
     retrieve_memory_context,
     retrieve_memory_for_request,
     score_text_for_keywords,
@@ -31,6 +40,97 @@ from app.services.memory_store import (
     write_knowledge_index,
     write_operator_preferences,
 )
+
+
+def build_chrome_case() -> dict:
+    """
+    Build a valid structured Chrome memory-pressure case.
+    """
+    return build_case_memory(
+        case_id="case_chrome_memory",
+        problem="Laptop felt slow",
+        symptoms=["slow response", "high memory pressure"],
+        suspected_cause="Chrome memory pressure",
+        lesson="Chrome high memory usage has previously caused slowdown on this machine.",
+        tags=["chrome", "memory", "slowdown"],
+        telemetry_evidence={
+            "cpu_usage_percent": 6,
+            "memory_usage_percent": 82,
+            "disk_usage_percent": 11,
+            "top_process_name": "chrome.exe",
+            "top_process_memory_mb": 3200,
+        },
+        event_evidence={
+            "critical_events": 0,
+            "warning_events": 0,
+            "context_events": 2,
+        },
+        action_taken="Operator closed unused Chrome tabs",
+        outcome="Laptop became more responsive",
+        diagnostic_steps=[
+            "Collected telemetry snapshot",
+            "Checked memory pressure",
+            "Listed top memory processes",
+        ],
+        decision_notes=[
+            "CPU was low, so CPU pressure was unlikely.",
+            "Memory was elevated and Chrome was the highest memory process.",
+        ],
+        operator_feedback="Closing tabs improved responsiveness.",
+        confidence=CASE_CONFIDENCE_HIGH,
+        source=CASE_SOURCE_OPERATOR_CONFIRMED,
+        created_at="2026-06-14T12:30:00+00:00",
+        updated_at="2026-06-14T12:40:00+00:00",
+        memory_usage_trace=build_memory_usage_trace(
+            memory_context_used=True,
+            retrieved_case_ids=["case_chrome_memory_000"],
+            retrieved_knowledge_ids=["windows_memory_pressure"],
+            retrieved_baseline_keys=["memory.normal_idle_percent_max"],
+            memory_influence=MEMORY_INFLUENCE_SUPPORTING_EVIDENCE,
+            memory_result=MEMORY_RESULT_HELPFUL,
+            memory_relevance_score=0.82,
+            memory_notes=["Previous Chrome memory case matched the current issue."],
+        ),
+    )
+
+
+def build_disk_case() -> dict:
+    """
+    Build a valid structured disk-pressure case.
+    """
+    return build_case_memory(
+        case_id="case_disk_space",
+        problem="Disk nearly full",
+        symptoms=["low disk space", "storage warning"],
+        suspected_cause="Disk pressure on the system drive",
+        lesson="Low free disk space can make maintenance and updates harder.",
+        tags=["disk", "storage", "cleanup"],
+        telemetry_evidence={
+            "cpu_usage_percent": 4,
+            "memory_usage_percent": 35,
+            "disk_usage_percent": 91,
+            "top_process_name": "system.exe",
+        },
+        event_evidence={
+            "critical_events": 0,
+            "warning_events": 1,
+            "context_events": 0,
+        },
+        action_taken="Operator reviewed large downloads.",
+        outcome="Storage review identified cleanup candidates.",
+        diagnostic_steps=[
+            "Collected telemetry snapshot",
+            "Checked disk usage",
+        ],
+        decision_notes=[
+            "Disk usage was above the warning threshold.",
+        ],
+        operator_feedback="Disk review helped identify large downloads.",
+        confidence=CASE_CONFIDENCE_HIGH,
+        source=CASE_SOURCE_OPERATOR_CONFIRMED,
+        created_at="2026-06-15T12:30:00+00:00",
+        updated_at="2026-06-15T12:40:00+00:00",
+    )
 
 
 def seed_memory(memory_dir: Path) -> None:
@@ -62,32 +162,8 @@ def seed_memory(memory_dir: Path) -> None:
         memory_dir=memory_dir,
     )
 
-    append_case_memory(
-        {
-            "case_id": "case_chrome_memory",
-            "summary": "Chrome caused high memory pressure and laptop slowdown.",
-            "evidence": {
-                "process": "chrome.exe",
-                "memory_mb": 4200,
-            },
-            "resolution": "Operator closed unused Chrome tabs.",
-            "tags": ["chrome", "memory", "slowdown"],
-        },
-        memory_dir=memory_dir,
-    )
-
-    append_case_memory(
-        {
-            "case_id": "case_disk_space",
-            "summary": "Disk space was low on the system drive.",
-            "evidence": {
-                "disk_usage_percent": 91,
-            },
-            "resolution": "Operator reviewed large downloads.",
-            "tags": ["disk", "storage"],
-        },
-        memory_dir=memory_dir,
-    )
+    append_case_memory(build_chrome_case(), memory_dir=memory_dir)
+    append_case_memory(build_disk_case(), memory_dir=memory_dir)
 
     write_knowledge_index(
         {
@@ -200,10 +276,42 @@ def test_filter_and_rank_entries_returns_relevant_entries_first() -> None:
     assert ranked[0].score == 3
 
 
+def test_prepare_case_entries_skips_invalid_case_memories() -> None:
+    """
+    Invalid structured case memories should not be allowed into engine context.
+    """
+    valid_case = build_chrome_case()
+    invalid_case = build_chrome_case()
+    invalid_case["case_card"]["tags"] = []
+
+    recall_safe_cases, invalid_count = prepare_case_entries_for_retrieval(
+        [valid_case, invalid_case]
+    )
+
+    assert len(recall_safe_cases) == 1
+    assert invalid_count == 1
+    assert recall_safe_cases[0]["case_id"] == "case_chrome_memory"
+
+
+def test_prepare_case_entries_returns_recall_safe_cards() -> None:
+    """
+    Valid cases should be converted into recall cards before retrieval scoring.
+    """
+    recall_safe_cases, invalid_count = prepare_case_entries_for_retrieval(
+        [build_chrome_case()]
+    )
+
+    assert invalid_count == 0
+    assert len(recall_safe_cases) == 1
+    assert "process_trace" not in recall_safe_cases[0]
+    assert "memory_usage_trace" not in recall_safe_cases[0]
+    assert recall_safe_cases[0]["case_card"]["problem"] == "Laptop felt slow"
+
+
 def test_retrieve_memory_for_request_returns_relevant_context(tmp_path) -> None:
     """
-    Retrieval should return baselines, preferences, relevant cases, and relevant
-    knowledge entries.
+    Retrieval should return baselines, preferences, relevant valid cases, and
+    relevant knowledge entries.
     """
     memory_dir = tmp_path / "memory"
     seed_memory(memory_dir)
@@ -220,10 +328,13 @@ def test_retrieve_memory_for_request_returns_relevant_context(tmp_path) -> None:
     assert len(result.cases) == 1
     assert result.cases[0].entry["case_id"] == "case_chrome_memory"
     assert result.cases[0].score > 0
+    assert "process_trace" not in result.cases[0].entry
+    assert "memory_usage_trace" not in result.cases[0].entry
 
     assert len(result.knowledge_entries) == 1
     assert result.knowledge_entries[0].entry["id"] == "windows_memory_pressure"
 
+    assert result.source_results["cases"]["invalid_case_count"] == 0
     assert result.errors == ()
 
 
@@ -280,20 +391,13 @@ def test_retrieve_memory_context_respects_case_limit(tmp_path) -> None:
     """
     memory_dir = tmp_path / "memory"
 
-    append_case_memory(
-        {
-            "case_id": "case_1",
-            "summary": "Chrome memory issue one.",
-        },
-        memory_dir=memory_dir,
-    )
-    append_case_memory(
-        {
-            "case_id": "case_2",
-            "summary": "Chrome memory issue two.",
-        },
-        memory_dir=memory_dir,
-    )
+    case_one = build_chrome_case()
+    case_two = build_chrome_case()
+    case_two["case_id"] = "case_chrome_memory_2"
+    case_two["case_card"]["lesson"] = "Chrome memory issue two."
+
+    append_case_memory(case_one, memory_dir=memory_dir)
+    append_case_memory(case_two, memory_dir=memory_dir)
 
     query = MemoryRetrievalQuery(
         user_request="chrome memory",
@@ -306,6 +410,31 @@ def test_retrieve_memory_context_respects_case_limit(tmp_path) -> None:
     )
 
     assert len(result.cases) == 1
+
+
+def test_retrieve_memory_context_reports_invalid_skipped_cases(tmp_path) -> None:
+    """
+    Retrieval source status should report invalid skipped case memories.
+    """
+    memory_dir = tmp_path / "memory"
+    valid_case = build_chrome_case()
+    invalid_case = build_chrome_case()
+    invalid_case["case_id"] = "case_invalid"
+    invalid_case["case_card"]["tags"] = []
+
+    append_case_memory(valid_case, memory_dir=memory_dir)
+    append_case_memory(invalid_case, memory_dir=memory_dir)
+
+    result = retrieve_memory_for_request(
+        "chrome memory",
+        memory_dir=memory_dir,
+    )
+
+    assert len(result.cases) == 1
+    assert result.cases[0].entry["case_id"] == "case_chrome_memory"
+    assert result.source_results["cases"]["raw_case_count"] == 2
+    assert result.source_results["cases"]["valid_case_count"] == 1
+    assert result.source_results["cases"]["invalid_case_count"] == 1
 
 
 def test_retrieval_result_to_dict_has_stable_shape(tmp_path) -> None:
