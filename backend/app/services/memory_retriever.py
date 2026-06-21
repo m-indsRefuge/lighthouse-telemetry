@@ -46,6 +46,7 @@ STOPWORDS = {
     "about",
     "after",
     "again",
+    "and",
     "because",
     "before",
     "being",
@@ -216,6 +217,53 @@ def extract_keywords(user_request: str) -> tuple[str, ...]:
     return normalize_keywords(raw_terms)
 
 
+def is_structured_case_recall_card(value: Any) -> bool:
+    """
+    Return True when value appears to be a structured case recall card.
+    """
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("case_card"), dict)
+        and isinstance(value.get("evidence_summary"), dict)
+    )
+
+
+def structured_case_recall_card_to_searchable_text(entry: dict[str, Any]) -> str:
+    """
+    Build searchable text from recall-safe structured case fields.
+
+    This intentionally avoids generic telemetry key names such as
+    memory_usage_percent and disk_usage_percent because those keys appear on
+    most recall cards and would create weak false-positive matches.
+    """
+    case_card = entry.get("case_card", {})
+    evidence_summary = entry.get("evidence_summary", {})
+
+    parts: list[Any] = []
+
+    if isinstance(case_card, dict):
+        parts.extend(
+            [
+                case_card.get("problem", ""),
+                case_card.get("symptoms", []),
+                case_card.get("suspected_cause", ""),
+                case_card.get("lesson", ""),
+                case_card.get("tags", []),
+            ]
+        )
+
+    if isinstance(evidence_summary, dict):
+        parts.extend(
+            [
+                evidence_summary.get("top_process_name", ""),
+                evidence_summary.get("action_taken", ""),
+                evidence_summary.get("outcome", ""),
+            ]
+        )
+
+    return " ".join(value_to_searchable_text(part) for part in parts if part)
+
+
 def value_to_searchable_text(value: Any) -> str:
     """
     Convert nested memory values into searchable text.
@@ -223,6 +271,9 @@ def value_to_searchable_text(value: Any) -> str:
     Identifier fields are included by key name but their values are not scored.
     This avoids an entry id like "chrome" artificially increasing relevance
     beyond the actual memory content.
+
+    Structured case recall cards use a narrower searchable projection so common
+    telemetry key names do not create false-positive relevance matches.
     """
     if value is None:
         return ""
@@ -232,6 +283,9 @@ def value_to_searchable_text(value: Any) -> str:
 
     if isinstance(value, (int, float, bool)):
         return normalize_text(value)
+
+    if is_structured_case_recall_card(value):
+        return structured_case_recall_card_to_searchable_text(value)
 
     if isinstance(value, dict):
         parts: list[str] = []
