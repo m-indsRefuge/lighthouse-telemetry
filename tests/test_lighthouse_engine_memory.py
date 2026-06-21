@@ -20,12 +20,66 @@ from app.services.engine_memory_context import (
     ENGINE_MEMORY_STATUS_DISABLED,
     ENGINE_MEMORY_STATUS_OK,
 )
+from app.services.memory_cases import (
+    CASE_CONFIDENCE_HIGH,
+    CASE_SOURCE_OPERATOR_CONFIRMED,
+)
+from app.services.memory_manager import build_case_memory
 from app.services.memory_store import (
     append_case_memory,
     write_baselines,
     write_knowledge_index,
     write_operator_preferences,
 )
+
+
+def build_chrome_case() -> dict:
+    """
+    Build a valid structured Chrome memory-pressure case.
+
+    This uses the current V1 memory contract. The engine memory context path
+    should only receive validated structured cases converted into recall-safe
+    cards.
+    """
+    return build_case_memory(
+        case_id="case_chrome_memory",
+        problem="Laptop felt slow",
+        symptoms=["slow response", "high memory pressure"],
+        suspected_cause="Chrome memory pressure",
+        lesson=(
+            "Chrome high memory usage has previously matched this slowdown "
+            "pattern."
+        ),
+        tags=["chrome", "memory", "slowdown"],
+        telemetry_evidence={
+            "cpu_usage_percent": 6,
+            "memory_usage_percent": 82,
+            "disk_usage_percent": 11,
+            "top_process_name": "chrome.exe",
+            "top_process_memory_mb": 3200,
+        },
+        event_evidence={
+            "critical_events": 0,
+            "warning_events": 0,
+            "context_events": 2,
+        },
+        action_taken="Operator reviewed Chrome memory usage",
+        outcome="Laptop responsiveness improved",
+        diagnostic_steps=[
+            "Collected telemetry snapshot",
+            "Checked memory pressure",
+            "Listed top memory processes",
+        ],
+        decision_notes=[
+            "CPU was low, so CPU pressure was unlikely.",
+            "Memory was elevated and Chrome was the highest memory process.",
+        ],
+        operator_feedback="The review matched the user-visible slowdown.",
+        confidence=CASE_CONFIDENCE_HIGH,
+        source=CASE_SOURCE_OPERATOR_CONFIRMED,
+        created_at="2026-06-14T12:30:00+00:00",
+        updated_at="2026-06-14T12:40:00+00:00",
+    )
 
 
 def seed_memory(memory_dir: Path) -> None:
@@ -52,12 +106,7 @@ def seed_memory(memory_dir: Path) -> None:
     )
 
     append_case_memory(
-        {
-            "case_id": "case_chrome_memory",
-            "summary": "Chrome caused high memory pressure and laptop slowdown.",
-            "resolution": "Operator closed unused Chrome tabs.",
-            "tags": ["chrome", "memory", "slowdown"],
-        },
+        build_chrome_case(),
         memory_dir=memory_dir,
     )
 
@@ -128,6 +177,40 @@ def test_engine_attaches_memory_context(tmp_path, monkeypatch) -> None:
     assert "case_chrome_memory" in result.memory_context.context_text
     assert "windows_memory_pressure" in result.memory_context.context_text
     assert result.errors == ()
+
+
+def test_engine_memory_context_is_recall_safe(tmp_path, monkeypatch) -> None:
+    """
+    Engine memory context should not expose audit/process internals from cases.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_memory(memory_dir)
+
+    monkeypatch.setattr(
+        lighthouse_engine,
+        "execute_tools_for_request",
+        lambda request: build_fake_execution_result(request),
+    )
+    monkeypatch.setattr(
+        lighthouse_engine,
+        "record_plan_execution",
+        lambda execution_result: SimpleNamespace(
+            status="ok",
+            message="Journaled.",
+            path="fake_journal.jsonl",
+        ),
+    )
+
+    result = lighthouse_engine.run_lighthouse_engine(
+        "chrome memory",
+        memory_dir=memory_dir,
+    )
+
+    assert result.memory_context is not None
+    assert "process_trace" not in result.memory_context.context_text
+    assert "memory_usage_trace" not in result.memory_context.context_text
+    assert "diagnostic_steps" not in result.memory_context.context_text
+    assert "decision_notes" not in result.memory_context.context_text
 
 
 def test_engine_can_disable_memory_context(tmp_path, monkeypatch) -> None:
