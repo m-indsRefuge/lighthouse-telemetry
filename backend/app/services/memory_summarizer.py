@@ -1,4 +1,4 @@
-﻿"""
+"""
 Memory summarizer for Lighthouse.
 
 This module turns retrieved Lighthouse memory into a compact context block.
@@ -169,10 +169,54 @@ def get_entry_identifier(entry: dict[str, Any]) -> str:
     return "unknown"
 
 
+def get_structured_case_card(entry: dict[str, Any]) -> dict[str, Any]:
+    """
+    Return a structured case_card dictionary when present.
+    """
+    case_card = entry.get("case_card")
+
+    return case_card if isinstance(case_card, dict) else {}
+
+
+def get_structured_case_evidence_summary(entry: dict[str, Any]) -> dict[str, Any]:
+    """
+    Return a structured evidence_summary dictionary when present.
+    """
+    evidence_summary = entry.get("evidence_summary")
+
+    return evidence_summary if isinstance(evidence_summary, dict) else {}
+
+
 def get_entry_summary(entry: dict[str, Any]) -> str:
     """
     Return a compact human-readable entry summary.
+
+    Structured case recall cards are summarized from case_card and
+    evidence_summary fields. Generic memory/knowledge entries still use the
+    legacy summary/title/content keys.
     """
+    case_card = get_structured_case_card(entry)
+
+    if case_card:
+        evidence_summary = get_structured_case_evidence_summary(entry)
+        parts: list[str] = []
+
+        problem = case_card.get("problem")
+        lesson = case_card.get("lesson")
+        outcome = evidence_summary.get("outcome")
+
+        if problem:
+            parts.append(f"Problem: {compact_text(problem)}")
+
+        if lesson:
+            parts.append(f"Lesson: {compact_text(lesson)}")
+
+        if outcome:
+            parts.append(f"Outcome: {compact_text(outcome)}")
+
+        if parts:
+            return " | ".join(parts)
+
     for key in ("summary", "title", "content_text", "content", "resolution"):
         value = entry.get(key)
 
@@ -188,6 +232,11 @@ def get_entry_tags(entry: dict[str, Any]) -> str:
     """
     tags = entry.get("tags", [])
 
+    case_card = get_structured_case_card(entry)
+
+    if case_card:
+        tags = case_card.get("tags", tags)
+
     if isinstance(tags, tuple):
         tags = list(tags)
 
@@ -195,6 +244,24 @@ def get_entry_tags(entry: dict[str, Any]) -> str:
         return "none"
 
     return ", ".join(compact_text(tag, max_length=40) for tag in tags)
+
+
+def get_entry_outcome(entry: dict[str, Any]) -> str:
+    """
+    Return a compact outcome or resolution when present.
+    """
+    evidence_summary = get_structured_case_evidence_summary(entry)
+    outcome = evidence_summary.get("outcome")
+
+    if outcome:
+        return compact_text(outcome)
+
+    resolution = entry.get("resolution")
+
+    if resolution:
+        return compact_text(resolution)
+
+    return ""
 
 
 def format_scored_entries_section(
@@ -227,10 +294,10 @@ def format_scored_entries_section(
         lines.append(f"   Summary: {summary}")
         lines.append(f"   Tags: {tags}")
 
-        resolution = entry.get("resolution")
+        outcome = get_entry_outcome(entry)
 
-        if resolution:
-            lines.append(f"   Resolution: {compact_text(resolution)}")
+        if outcome:
+            lines.append(f"   Outcome: {outcome}")
 
     remaining_count = len(scored_entries) - len(limited_entries)
 
@@ -244,12 +311,20 @@ def build_source_warnings(
     retrieval_result: MemoryRetrievalResult,
 ) -> tuple[str, ...]:
     """
-    Build warning strings from memory retrieval errors.
+    Build warning strings from memory retrieval errors and source-status metadata.
     """
     warnings: list[str] = []
 
     for error in retrieval_result.errors:
         warnings.append(error)
+
+    cases_status = retrieval_result.source_results.get("cases", {})
+    invalid_case_count = cases_status.get("invalid_case_count", 0)
+
+    if isinstance(invalid_case_count, int) and invalid_case_count > 0:
+        warnings.append(
+            f"Skipped {invalid_case_count} invalid case memory record(s)."
+        )
 
     return tuple(warnings)
 
