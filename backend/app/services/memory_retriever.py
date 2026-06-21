@@ -1,4 +1,4 @@
-﻿"""
+"""
 Memory retriever for Lighthouse.
 
 This module retrieves relevant Lighthouse memory for an Operator request.
@@ -8,6 +8,9 @@ It does not execute tools.
 It does not make final safety decisions.
 It returns controlled context that the Lighthouse Engine can later pass to the
 reasoning/model layer.
+
+Structured case memories are validated and converted into recall-safe cards
+before they can influence engine memory context.
 """
 
 from __future__ import annotations
@@ -17,6 +20,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.services.memory_cases import (
+    extract_case_recall_card,
+    validate_case_memory,
+)
 from app.services.memory_store import (
     MEMORY_STORE_STATUS_OK,
     read_baselines,
@@ -288,6 +295,19 @@ def score_memory_entry(
     )
 
 
+def get_entry_identifier(entry: dict[str, Any]) -> str:
+    """
+    Return a stable identifier for deterministic tie-breaking.
+    """
+    for key in ("case_id", "memory_id", "id"):
+        value = entry.get(key)
+
+        if value:
+            return str(value)
+
+    return ""
+
+
 def filter_and_rank_entries(
     entries: list[dict[str, Any]],
     *,
@@ -321,7 +341,12 @@ def filter_and_rank_entries(
         if scored_entry.score > 0
     ]
 
-    relevant_entries.sort(key=lambda item: item.score, reverse=True)
+    relevant_entries.sort(
+        key=lambda item: (
+            -item.score,
+            get_entry_identifier(item.entry),
+        )
+    )
 
     return tuple(relevant_entries[:limit])
 
@@ -352,6 +377,51 @@ def collect_source_error(source_name: str, source_result: Any) -> str | None:
         return f"{source_name}: {message} ({error})"
 
     return f"{source_name}: {message}"
+
+
+def get_entries_from_store_result(result: Any) -> list[dict[str, Any]]:
+    """
+    Extract list entries from a memory-store result.
+
+    memory_store.py returns JSONL reads as {"entries": [...]}; this helper also
+    accepts direct list-shaped data for defensive compatibility.
+    """
+    data = getattr(result, "data", None)
+
+    if isinstance(data, list):
+        return [entry for entry in data if isinstance(entry, dict)]
+
+    if isinstance(data, dict):
+        entries = data.get("entries", [])
+
+        if isinstance(entries, list):
+            return [entry for entry in entries if isinstance(entry, dict)]
+
+    return []
+
+
+def prepare_case_entries_for_retrieval(
+    raw_cases: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """
+    Validate stored case memories and return recall-safe case entries.
+
+    Invalid cases are skipped. Valid cases are converted into recall cards so
+    process_trace and memory_usage_trace cannot leak into engine memory context.
+    """
+    recall_safe_cases: list[dict[str, Any]] = []
+    invalid_case_count = 0
+
+    for raw_case in raw_cases:
+        validation = validate_case_memory(raw_case)
+
+        if not validation.valid:
+            invalid_case_count += 1
+            continue
+
+        recall_safe_cases.append(extract_case_recall_card(raw_case))
+
+    return recall_safe_cases, invalid_case_count
 
 
 def build_retrieval_status(errors: list[str]) -> str:
@@ -431,14 +501,23 @@ def retrieve_memory_context(
         if error:
             errors.append(error)
         else:
-            raw_cases = cases_result.data.get("entries", [])
+            raw_cases = get_entries_from_store_result(cases_result)
+            recall_safe_cases, invalid_case_count = prepare_case_entries_for_retrieval(
+                raw_cases
+            )
 
-            if isinstance(raw_cases, list):
-                cases = filter_and_rank_entries(
-                    raw_cases,
-                    keywords=keywords,
-                    limit=query.max_cases,
-                )
+            source_results["cases"] = {
+                **source_results["cases"],
+                "raw_case_count": len(raw_cases),
+                "valid_case_count": len(recall_safe_cases),
+                "invalid_case_count": invalid_case_count,
+            }
+
+            cases = filter_and_rank_entries(
+                recall_safe_cases,
+                keywords=keywords,
+                limit=query.max_cases,
+            )
 
     if query.include_knowledge:
         knowledge_result = read_knowledge_index(memory_dir=memory_dir)
