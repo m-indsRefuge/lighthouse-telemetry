@@ -27,6 +27,14 @@ from app.services.engine_memory_context import (
     has_useful_memory_context,
     map_memory_summary_status,
 )
+from app.services.memory_cases import (
+    CASE_CONFIDENCE_HIGH,
+    CASE_SOURCE_OPERATOR_CONFIRMED,
+    MEMORY_INFLUENCE_SUPPORTING_EVIDENCE,
+    MEMORY_RESULT_HELPFUL,
+    build_memory_usage_trace,
+)
+from app.services.memory_manager import build_case_memory
 from app.services.memory_store import (
     append_case_memory,
     write_baselines,
@@ -38,6 +46,58 @@ from app.services.memory_summarizer import (
     MEMORY_SUMMARY_STATUS_OK,
     MEMORY_SUMMARY_STATUS_PARTIAL,
 )
+
+
+def build_chrome_case() -> dict:
+    """
+    Build a valid structured Chrome memory-pressure case.
+    """
+    return build_case_memory(
+        case_id="case_chrome_memory",
+        problem="Laptop felt slow",
+        symptoms=["slow response", "high memory pressure"],
+        suspected_cause="Chrome memory pressure",
+        lesson="Chrome high memory usage has previously caused slowdown on this machine.",
+        tags=["chrome", "memory", "slowdown"],
+        telemetry_evidence={
+            "cpu_usage_percent": 6,
+            "memory_usage_percent": 82,
+            "disk_usage_percent": 11,
+            "top_process_name": "chrome.exe",
+            "top_process_memory_mb": 3200,
+        },
+        event_evidence={
+            "critical_events": 0,
+            "warning_events": 0,
+            "context_events": 2,
+        },
+        action_taken="Operator closed unused Chrome tabs",
+        outcome="Laptop became more responsive",
+        diagnostic_steps=[
+            "Collected telemetry snapshot",
+            "Checked memory pressure",
+            "Listed top memory processes",
+        ],
+        decision_notes=[
+            "CPU was low, so CPU pressure was unlikely.",
+            "Memory was elevated and Chrome was the highest memory process.",
+        ],
+        operator_feedback="Closing tabs improved responsiveness.",
+        confidence=CASE_CONFIDENCE_HIGH,
+        source=CASE_SOURCE_OPERATOR_CONFIRMED,
+        created_at="2026-06-14T12:30:00+00:00",
+        updated_at="2026-06-14T12:40:00+00:00",
+        memory_usage_trace=build_memory_usage_trace(
+            memory_context_used=True,
+            retrieved_case_ids=["case_chrome_memory_000"],
+            retrieved_knowledge_ids=["windows_memory_pressure"],
+            retrieved_baseline_keys=["memory.normal_idle_percent_max"],
+            memory_influence=MEMORY_INFLUENCE_SUPPORTING_EVIDENCE,
+            memory_result=MEMORY_RESULT_HELPFUL,
+            memory_relevance_score=0.82,
+            memory_notes=["Previous Chrome memory case matched the current issue."],
+        ),
+    )
 
 
 def seed_memory(memory_dir: Path) -> None:
@@ -66,15 +126,7 @@ def seed_memory(memory_dir: Path) -> None:
         memory_dir=memory_dir,
     )
 
-    append_case_memory(
-        {
-            "case_id": "case_chrome_memory",
-            "summary": "Chrome caused high memory pressure and laptop slowdown.",
-            "resolution": "Operator closed unused Chrome tabs.",
-            "tags": ["chrome", "memory", "slowdown"],
-        },
-        memory_dir=memory_dir,
-    )
+    append_case_memory(build_chrome_case(), memory_dir=memory_dir)
 
     write_knowledge_index(
         {
@@ -163,7 +215,7 @@ def test_build_engine_memory_context_disabled_flag(tmp_path) -> None:
 
 def test_build_engine_memory_context_with_seeded_memory(tmp_path) -> None:
     """
-    Seeded memory should produce useful engine memory context.
+    Seeded structured memory should produce useful engine memory context.
     """
     memory_dir = tmp_path / "memory"
     seed_memory(memory_dir)
@@ -179,8 +231,69 @@ def test_build_engine_memory_context_with_seeded_memory(tmp_path) -> None:
     assert context.user_request == "why is Chrome using memory"
     assert "LIGHTHOUSE MEMORY CONTEXT" in context.context_text
     assert "case_chrome_memory" in context.context_text
+    assert "Laptop felt slow" in context.context_text
     assert "windows_memory_pressure" in context.context_text
     assert context.errors == ()
+
+
+def test_engine_memory_context_excludes_process_trace(tmp_path) -> None:
+    """
+    Engine memory context must not expose process_trace internals.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_memory(memory_dir)
+
+    context = build_engine_memory_context(
+        "chrome memory",
+        memory_dir=memory_dir,
+    )
+
+    assert "process_trace" not in context.context_text
+    assert "diagnostic_steps" not in context.context_text
+    assert "Collected telemetry snapshot" not in context.context_text
+
+
+def test_engine_memory_context_excludes_memory_usage_trace(tmp_path) -> None:
+    """
+    Engine memory context must not expose memory_usage_trace internals.
+    """
+    memory_dir = tmp_path / "memory"
+    seed_memory(memory_dir)
+
+    context = build_engine_memory_context(
+        "chrome memory",
+        memory_dir=memory_dir,
+    )
+
+    assert "memory_usage_trace" not in context.context_text
+    assert "retrieved_case_ids" not in context.context_text
+    assert "Previous Chrome memory case matched" not in context.context_text
+
+
+def test_build_engine_memory_context_skips_invalid_cases(tmp_path) -> None:
+    """
+    Invalid case memories should be skipped before reaching engine context.
+    """
+    memory_dir = tmp_path / "memory"
+    valid_case = build_chrome_case()
+    invalid_case = build_chrome_case()
+    invalid_case["case_id"] = "case_invalid"
+    invalid_case["case_card"]["tags"] = []
+
+    append_case_memory(valid_case, memory_dir=memory_dir)
+    append_case_memory(invalid_case, memory_dir=memory_dir)
+
+    context = build_engine_memory_context(
+        "chrome memory",
+        memory_dir=memory_dir,
+    )
+
+    assert context.status == ENGINE_MEMORY_STATUS_OK
+    assert "case_chrome_memory" in context.context_text
+    assert "case_invalid" not in context.context_text
+    assert context.summary is not None
+    assert context.summary.source_status["cases"]["invalid_case_count"] == 1
+    assert context.warnings == ("Skipped 1 invalid case memory record(s).",)
 
 
 def test_build_engine_memory_context_empty_memory(tmp_path) -> None:
