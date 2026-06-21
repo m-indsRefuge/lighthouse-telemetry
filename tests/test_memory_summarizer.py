@@ -14,6 +14,15 @@ BACKEND_PATH = PROJECT_ROOT / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
+from app.services.memory_cases import (
+    CASE_CONFIDENCE_HIGH,
+    CASE_SOURCE_OPERATOR_CONFIRMED,
+    MEMORY_INFLUENCE_SUPPORTING_EVIDENCE,
+    MEMORY_RESULT_HELPFUL,
+    build_memory_usage_trace,
+    extract_case_recall_card,
+)
+from app.services.memory_manager import build_case_memory
 from app.services.memory_summarizer import (
     MEMORY_SUMMARY_STATUS_EMPTY,
     MEMORY_SUMMARY_STATUS_OK,
@@ -22,11 +31,11 @@ from app.services.memory_summarizer import (
     format_key_value_section,
     get_entry_identifier,
     get_entry_summary,
+    get_entry_tags,
     summarize_memory_context,
     summarize_memory_for_request,
 )
 from app.services.memory_retriever import (
-    MemoryRetrievalQuery,
     retrieve_memory_for_request,
 )
 from app.services.memory_store import (
@@ -35,6 +44,58 @@ from app.services.memory_store import (
     write_knowledge_index,
     write_operator_preferences,
 )
+
+
+def build_chrome_case() -> dict:
+    """
+    Build a valid structured Chrome memory-pressure case.
+    """
+    return build_case_memory(
+        case_id="case_chrome_memory",
+        problem="Laptop felt slow",
+        symptoms=["slow response", "high memory pressure"],
+        suspected_cause="Chrome memory pressure",
+        lesson="Chrome high memory usage has previously caused slowdown on this machine.",
+        tags=["chrome", "memory", "slowdown"],
+        telemetry_evidence={
+            "cpu_usage_percent": 6,
+            "memory_usage_percent": 82,
+            "disk_usage_percent": 11,
+            "top_process_name": "chrome.exe",
+            "top_process_memory_mb": 3200,
+        },
+        event_evidence={
+            "critical_events": 0,
+            "warning_events": 0,
+            "context_events": 2,
+        },
+        action_taken="Operator closed unused Chrome tabs",
+        outcome="Laptop became more responsive",
+        diagnostic_steps=[
+            "Collected telemetry snapshot",
+            "Checked memory pressure",
+            "Listed top memory processes",
+        ],
+        decision_notes=[
+            "CPU was low, so CPU pressure was unlikely.",
+            "Memory was elevated and Chrome was the highest memory process.",
+        ],
+        operator_feedback="Closing tabs improved responsiveness.",
+        confidence=CASE_CONFIDENCE_HIGH,
+        source=CASE_SOURCE_OPERATOR_CONFIRMED,
+        created_at="2026-06-14T12:30:00+00:00",
+        updated_at="2026-06-14T12:40:00+00:00",
+        memory_usage_trace=build_memory_usage_trace(
+            memory_context_used=True,
+            retrieved_case_ids=["case_chrome_memory_000"],
+            retrieved_knowledge_ids=["windows_memory_pressure"],
+            retrieved_baseline_keys=["memory.normal_idle_percent_max"],
+            memory_influence=MEMORY_INFLUENCE_SUPPORTING_EVIDENCE,
+            memory_result=MEMORY_RESULT_HELPFUL,
+            memory_relevance_score=0.82,
+            memory_notes=["Previous Chrome memory case matched the current issue."],
+        ),
+    )
 
 
 def seed_memory(memory_dir: Path) -> None:
@@ -66,19 +127,7 @@ def seed_memory(memory_dir: Path) -> None:
         memory_dir=memory_dir,
     )
 
-    append_case_memory(
-        {
-            "case_id": "case_chrome_memory",
-            "summary": "Chrome caused high memory pressure and laptop slowdown.",
-            "evidence": {
-                "process": "chrome.exe",
-                "memory_mb": 4200,
-            },
-            "resolution": "Operator closed unused Chrome tabs.",
-            "tags": ["chrome", "memory", "slowdown"],
-        },
-        memory_dir=memory_dir,
-    )
+    append_case_memory(build_chrome_case(), memory_dir=memory_dir)
 
     write_knowledge_index(
         {
@@ -161,7 +210,7 @@ def test_get_entry_identifier_prefers_known_ids() -> None:
 
 def test_get_entry_summary_prefers_summary_then_title() -> None:
     """
-    Entry summary should prefer summary over title.
+    Generic entry summary should prefer summary over title.
     """
     assert get_entry_summary(
         {
@@ -177,6 +226,28 @@ def test_get_entry_summary_prefers_summary_then_title() -> None:
     ) == "Title text"
 
     assert get_entry_summary({}) == "No summary available."
+
+
+def test_get_entry_summary_understands_structured_case_recall_card() -> None:
+    """
+    Structured case recall cards should summarize from case_card fields.
+    """
+    recall_card = extract_case_recall_card(build_chrome_case())
+
+    summary = get_entry_summary(recall_card)
+
+    assert "Problem: Laptop felt slow" in summary
+    assert "Lesson: Chrome high memory usage" in summary
+    assert "Outcome: Laptop became more responsive" in summary
+
+
+def test_get_entry_tags_understands_structured_case_recall_card() -> None:
+    """
+    Structured case recall cards should expose tags from case_card.
+    """
+    recall_card = extract_case_recall_card(build_chrome_case())
+
+    assert get_entry_tags(recall_card) == "chrome, memory, slowdown"
 
 
 def test_summarize_memory_context_builds_context_text(tmp_path) -> None:
@@ -207,6 +278,8 @@ def test_summarize_memory_context_builds_context_text(tmp_path) -> None:
     assert "Operator preferences:" in summary.context_text
     assert "Relevant case memories:" in summary.context_text
     assert "case_chrome_memory" in summary.context_text
+    assert "Laptop felt slow" in summary.context_text
+    assert "Chrome high memory usage has previously caused slowdown" in summary.context_text
     assert "Relevant knowledge entries:" in summary.context_text
     assert "windows_memory_pressure" in summary.context_text
 
@@ -226,7 +299,31 @@ def test_summarize_memory_for_request_retrieves_and_summarizes(tmp_path) -> None
     assert summary.status == MEMORY_SUMMARY_STATUS_OK
     assert summary.case_count == 1
     assert summary.knowledge_count == 1
-    assert "Chrome caused high memory pressure" in summary.context_text
+    assert "Chrome high memory usage has previously caused slowdown" in summary.context_text
+    assert "Laptop became more responsive" in summary.context_text
+
+
+def test_summarize_memory_context_reports_invalid_skipped_cases(tmp_path) -> None:
+    """
+    Source warnings should report invalid case memories skipped by retrieval.
+    """
+    memory_dir = tmp_path / "memory"
+    valid_case = build_chrome_case()
+    invalid_case = build_chrome_case()
+    invalid_case["case_id"] = "case_invalid"
+    invalid_case["case_card"]["tags"] = []
+
+    append_case_memory(valid_case, memory_dir=memory_dir)
+    append_case_memory(invalid_case, memory_dir=memory_dir)
+
+    summary = summarize_memory_for_request(
+        "chrome memory",
+        memory_dir=memory_dir,
+    )
+
+    assert summary.case_count == 1
+    assert summary.warnings == ("Skipped 1 invalid case memory record(s).",)
+    assert "Skipped 1 invalid case memory record(s)." in summary.context_text
 
 
 def test_summarize_empty_memory_context_returns_empty_status(tmp_path) -> None:
