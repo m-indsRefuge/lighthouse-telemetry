@@ -26,6 +26,7 @@ from app.services.memory_cases import (
     MEMORY_TYPE_KNOWLEDGE,
     RELEVANCE_LABEL_EXACT,
     RELEVANCE_LABEL_HIGH,
+    RELEVANCE_LABEL_MEDIUM,
     RETENTION_STANDARD,
     build_case_id,
     build_memory_usage_trace,
@@ -53,7 +54,10 @@ def valid_case_memory() -> dict:
             "problem": "Laptop felt slow",
             "symptoms": ["slow response", "high memory pressure"],
             "suspected_cause": "Chrome memory pressure",
-            "lesson": "Chrome high memory usage has previously caused slowdown on this machine.",
+            "lesson": (
+                "Chrome high memory usage has previously caused slowdown "
+                "on this machine."
+            ),
             "tags": ["chrome", "memory", "slowdown"],
         },
         "evidence": {
@@ -93,7 +97,7 @@ def valid_case_memory() -> dict:
             "memory_influence": MEMORY_INFLUENCE_SUPPORTING_EVIDENCE,
             "memory_result": MEMORY_RESULT_HELPFUL,
             "memory_relevance_score": 0.86,
-            "memory_relevance_label": RELEVANCE_LABEL_EXACT,
+            "memory_relevance_label": RELEVANCE_LABEL_HIGH,
             "retrieved_memory_scores": [
                 {
                     "memory_id": "case_chrome_memory_000",
@@ -113,7 +117,7 @@ def valid_case_memory() -> dict:
                     "memory_id": "memory.normal_idle_percent_max",
                     "memory_type": MEMORY_TYPE_BASELINE,
                     "relevance_score": 0.68,
-                    "relevance_label": RELEVANCE_LABEL_HIGH,
+                    "relevance_label": RELEVANCE_LABEL_MEDIUM,
                     "match_reasons": ["baseline_pressure_match"],
                 },
             ],
@@ -184,7 +188,9 @@ def test_vague_case_memory_fails_validation() -> None:
 
 def test_unsafe_case_memory_fails_validation() -> None:
     case_memory = valid_case_memory()
-    case_memory["evidence"]["action_taken"] = "Close Chrome without confirmation next time."
+    case_memory["evidence"][
+        "action_taken"
+    ] = "Close Chrome without confirmation next time."
 
     result = validate_case_memory(case_memory)
 
@@ -202,15 +208,15 @@ def test_memory_usage_trace_requires_valid_relevance_fields() -> None:
     assert "memory_relevance_score" in " ".join(result.errors)
 
 
-def test_memory_usage_trace_warns_when_label_does_not_match_score() -> None:
+def test_memory_usage_trace_rejects_when_label_does_not_match_score() -> None:
     case_memory = valid_case_memory()
     case_memory["memory_usage_trace"]["memory_relevance_score"] = 0.1
     case_memory["memory_usage_trace"]["memory_relevance_label"] = RELEVANCE_LABEL_HIGH
 
     result = validate_case_memory(case_memory)
 
-    assert result.valid is True
-    assert any("label does not match score" in warning for warning in result.warnings)
+    assert result.valid is False
+    assert "does not match" in " ".join(result.errors)
 
 
 def test_build_memory_usage_trace_adds_score_and_label() -> None:
@@ -227,6 +233,16 @@ def test_build_memory_usage_trace_adds_score_and_label() -> None:
     assert trace["memory_relevance_score"] == 0.7
     assert trace["memory_relevance_label"] == RELEVANCE_LABEL_HIGH
     assert trace["retrieved_case_ids"] == ["case_chrome_memory_001"]
+
+
+def test_build_memory_usage_trace_defaults_to_no_context_used() -> None:
+    trace = build_memory_usage_trace()
+
+    assert trace["memory_context_used"] is False
+    assert trace["retrieved_case_ids"] == []
+    assert trace["retrieved_knowledge_ids"] == []
+    assert trace["retrieved_baseline_keys"] == []
+    assert trace["memory_relevance_score"] == 0.0
 
 
 def test_extract_case_recall_card_excludes_heavy_trace_fields() -> None:

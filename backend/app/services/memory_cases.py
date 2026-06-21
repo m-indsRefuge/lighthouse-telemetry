@@ -1,61 +1,60 @@
 """
-Structured case-memory utilities for Lighthouse.
+Structured memory case utilities for Lighthouse.
 
-This module defines the core V1 case-memory mechanics.
+This module defines the deterministic schema, validation, recall-card extraction,
+and relevance scoring behavior for Lighthouse case memories.
 
-It does not write files.
 It does not call the model.
 It does not execute tools.
-It only validates, scores, and prepares structured case memories.
+It does not mutate the OS.
+It does not write to memory storage.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from hashlib import sha256
 import re
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 
 JsonDict = dict[str, Any]
 
 
-CASE_STATUS_DRAFT = "draft"
-CASE_STATUS_OPEN = "open"
 CASE_STATUS_RESOLVED = "resolved"
-CASE_STATUS_REJECTED = "rejected"
+CASE_STATUS_UNRESOLVED = "unresolved"
 CASE_STATUS_ARCHIVED = "archived"
 
 ALLOWED_CASE_STATUSES = {
-    CASE_STATUS_DRAFT,
-    CASE_STATUS_OPEN,
     CASE_STATUS_RESOLVED,
-    CASE_STATUS_REJECTED,
+    CASE_STATUS_UNRESOLVED,
     CASE_STATUS_ARCHIVED,
 }
+
 
 CASE_CONFIDENCE_LOW = "low"
 CASE_CONFIDENCE_MEDIUM = "medium"
 CASE_CONFIDENCE_HIGH = "high"
 
-ALLOWED_CASE_CONFIDENCE = {
+ALLOWED_CASE_CONFIDENCE_VALUES = {
     CASE_CONFIDENCE_LOW,
     CASE_CONFIDENCE_MEDIUM,
     CASE_CONFIDENCE_HIGH,
 }
 
-CASE_SOURCE_OPERATOR_CONFIRMED = "operator_confirmed"
+
 CASE_SOURCE_OPERATOR_ENTERED = "operator_entered"
-CASE_SOURCE_SYSTEM_OBSERVED = "system_observed"
-CASE_SOURCE_MODEL_PROPOSED = "model_proposed"
+CASE_SOURCE_OPERATOR_CONFIRMED = "operator_confirmed"
+CASE_SOURCE_MODEL_SUGGESTED = "model_suggested"
+CASE_SOURCE_SYSTEM_GENERATED = "system_generated"
 
 ALLOWED_CASE_SOURCES = {
-    CASE_SOURCE_OPERATOR_CONFIRMED,
     CASE_SOURCE_OPERATOR_ENTERED,
-    CASE_SOURCE_SYSTEM_OBSERVED,
-    CASE_SOURCE_MODEL_PROPOSED,
+    CASE_SOURCE_OPERATOR_CONFIRMED,
+    CASE_SOURCE_MODEL_SUGGESTED,
+    CASE_SOURCE_SYSTEM_GENERATED,
 }
+
 
 MEMORY_INFLUENCE_NONE = "none"
 MEMORY_INFLUENCE_SUPPORTING_EVIDENCE = "supporting_evidence"
@@ -64,7 +63,7 @@ MEMORY_INFLUENCE_CHANGED_RECOMMENDATION = "changed_recommendation"
 MEMORY_INFLUENCE_PREVENTED_UNNECESSARY_ACTION = "prevented_unnecessary_action"
 MEMORY_INFLUENCE_FLAGGED_RISK = "flagged_risk"
 
-ALLOWED_MEMORY_INFLUENCE = {
+ALLOWED_MEMORY_INFLUENCE_VALUES = {
     MEMORY_INFLUENCE_NONE,
     MEMORY_INFLUENCE_SUPPORTING_EVIDENCE,
     MEMORY_INFLUENCE_CHANGED_PRIORITY,
@@ -73,19 +72,21 @@ ALLOWED_MEMORY_INFLUENCE = {
     MEMORY_INFLUENCE_FLAGGED_RISK,
 }
 
+
 MEMORY_RESULT_NOT_USED = "not_used"
 MEMORY_RESULT_HELPFUL = "helpful"
 MEMORY_RESULT_NEUTRAL = "neutral"
 MEMORY_RESULT_MISLEADING = "misleading"
 MEMORY_RESULT_UNKNOWN = "unknown"
 
-ALLOWED_MEMORY_RESULTS = {
+ALLOWED_MEMORY_RESULT_VALUES = {
     MEMORY_RESULT_NOT_USED,
     MEMORY_RESULT_HELPFUL,
     MEMORY_RESULT_NEUTRAL,
     MEMORY_RESULT_MISLEADING,
     MEMORY_RESULT_UNKNOWN,
 }
+
 
 RELEVANCE_LABEL_NONE = "none"
 RELEVANCE_LABEL_LOW = "low"
@@ -101,68 +102,142 @@ ALLOWED_RELEVANCE_LABELS = {
     RELEVANCE_LABEL_EXACT,
 }
 
-MEMORY_TYPE_CASE = "case"
-MEMORY_TYPE_KNOWLEDGE = "knowledge"
-MEMORY_TYPE_BASELINE = "baseline"
-MEMORY_TYPE_PREFERENCE = "preference"
-
-ALLOWED_RETRIEVED_MEMORY_TYPES = {
-    MEMORY_TYPE_CASE,
-    MEMORY_TYPE_KNOWLEDGE,
-    MEMORY_TYPE_BASELINE,
-    MEMORY_TYPE_PREFERENCE,
-}
 
 RETENTION_STANDARD = "standard"
 RETENTION_PINNED = "pinned"
-RETENTION_SHORT = "short"
-RETENTION_ARCHIVE = "archive"
 
 ALLOWED_RETENTION_POLICIES = {
     RETENTION_STANDARD,
     RETENTION_PINNED,
-    RETENTION_SHORT,
-    RETENTION_ARCHIVE,
 }
 
-UNSAFE_MEMORY_PHRASES = {
-    "without confirmation",
-    "bypass confirmation",
-    "skip confirmation",
-    "ignore confirmation",
-    "disable safety",
-    "ignore safety",
-    "run raw command",
-    "raw powershell",
-    "delete user files",
-    "delete files automatically",
-    "edit registry",
-    "change drivers",
-    "change services",
-    "uninstall software",
+
+MEMORY_TYPE_CASE = "case"
+MEMORY_TYPE_KNOWLEDGE = "knowledge"
+MEMORY_TYPE_BASELINE = "baseline"
+MEMORY_TYPE_OPERATOR_PREFERENCE = "operator_preference"
+
+ALLOWED_MEMORY_TYPES = {
+    MEMORY_TYPE_CASE,
+    MEMORY_TYPE_KNOWLEDGE,
+    MEMORY_TYPE_BASELINE,
+    MEMORY_TYPE_OPERATOR_PREFERENCE,
 }
+
+
+REQUIRED_TOP_LEVEL_FIELDS = {
+    "case_id",
+    "created_at",
+    "updated_at",
+    "status",
+    "confidence",
+    "source",
+    "case_card",
+    "evidence",
+    "process_trace",
+    "memory_usage_trace",
+    "lifecycle",
+}
+
+REQUIRED_CASE_CARD_FIELDS = {
+    "problem",
+    "symptoms",
+    "suspected_cause",
+    "lesson",
+    "tags",
+}
+
+REQUIRED_EVIDENCE_FIELDS = {
+    "telemetry_evidence",
+    "event_evidence",
+    "action_taken",
+    "outcome",
+}
+
+REQUIRED_PROCESS_TRACE_FIELDS = {
+    "diagnostic_steps",
+    "decision_notes",
+    "operator_feedback",
+}
+
+REQUIRED_MEMORY_USAGE_TRACE_FIELDS = {
+    "memory_context_used",
+    "retrieved_case_ids",
+    "retrieved_knowledge_ids",
+    "retrieved_baseline_keys",
+    "memory_influence",
+    "memory_result",
+    "memory_relevance_score",
+    "memory_relevance_label",
+    "retrieved_memory_scores",
+    "memory_notes",
+}
+
+REQUIRED_LIFECYCLE_FIELDS = {
+    "use_count",
+    "last_used_at",
+    "pinned",
+    "retention_policy",
+}
+
 
 STOPWORDS = {
     "a",
     "an",
     "and",
     "are",
+    "as",
+    "at",
+    "be",
     "because",
+    "but",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
     "for",
     "from",
+    "have",
     "how",
+    "i",
+    "in",
     "is",
     "it",
+    "me",
     "my",
     "of",
     "on",
     "or",
     "please",
+    "should",
+    "so",
     "the",
     "this",
     "to",
+    "was",
+    "what",
+    "when",
     "why",
     "with",
+    "would",
+    "you",
+    "your",
+}
+
+
+UNSAFE_MEMORY_TEXT_PATTERNS = {
+    "ignore previous instructions",
+    "bypass validation",
+    "skip confirmation",
+    "skip operator confirmation",
+    "without confirmation next time",
+    "disable safety",
+    "override safety",
+    "delete system32",
+    "edit registry without confirmation",
+    "run raw command",
 }
 
 
@@ -173,12 +248,12 @@ class MemoryCaseValidationResult:
     """
 
     valid: bool
-    errors: tuple[str, ...]
-    warnings: tuple[str, ...]
+    errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> JsonDict:
         """
-        Convert the validation result into a stable dictionary.
+        Return a serializable validation result.
         """
         return {
             "valid": self.valid,
@@ -190,20 +265,18 @@ class MemoryCaseValidationResult:
 @dataclass(frozen=True)
 class CaseRelevanceResult:
     """
-    Deterministic relevance result for a case memory.
+    Deterministic relevance score for a case memory.
     """
 
-    case_id: str
     score: float
     label: str
-    reasons: tuple[str, ...]
+    reasons: tuple[str, ...] = ()
 
     def to_dict(self) -> JsonDict:
         """
-        Convert the relevance result into a stable dictionary.
+        Return a serializable relevance result.
         """
         return {
-            "case_id": self.case_id,
             "score": self.score,
             "label": self.label,
             "reasons": list(self.reasons),
@@ -212,142 +285,147 @@ class CaseRelevanceResult:
 
 def utc_now_iso() -> str:
     """
-    Return the current UTC time as an ISO-8601 string.
+    Return the current UTC time in ISO format.
     """
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def normalize_score(value: Any) -> float:
+def normalize_score(score: Any) -> float:
     """
-    Normalize a relevance score into the 0.0 to 1.0 range.
+    Normalize a numeric score into the inclusive 0.0 to 1.0 range.
+
+    Non-numeric values normalize to 0.0.
     """
-    if isinstance(value, bool):
+    if isinstance(score, bool):
         return 0.0
 
     try:
-        score = float(value)
+        numeric_score = float(score)
     except (TypeError, ValueError):
         return 0.0
 
-    if score < 0:
+    if numeric_score < 0.0:
         return 0.0
 
-    if score > 1:
+    if numeric_score > 1.0:
         return 1.0
 
-    return round(score, 4)
+    return round(numeric_score, 4)
 
 
-def relevance_label_for_score(score: float) -> str:
+def relevance_label_for_score(score: Any) -> str:
     """
-    Convert a numeric relevance score into a simple label.
+    Return a relevance label for a bounded score.
     """
     normalized = normalize_score(score)
 
-    if normalized >= 0.85:
+    if normalized >= 0.9:
         return RELEVANCE_LABEL_EXACT
 
-    if normalized >= 0.65:
+    if normalized >= 0.7:
         return RELEVANCE_LABEL_HIGH
 
-    if normalized >= 0.35:
+    if normalized >= 0.4:
         return RELEVANCE_LABEL_MEDIUM
 
-    if normalized > 0:
+    if normalized > 0.0:
         return RELEVANCE_LABEL_LOW
 
     return RELEVANCE_LABEL_NONE
 
 
-def build_case_id(
-    problem: str,
-    tags: list[str] | tuple[str, ...],
-    created_at: str | None = None,
-) -> str:
-    """
-    Build a stable-looking case ID from problem, tags, and timestamp seed.
-    """
-    timestamp = created_at or utc_now_iso()
-    clean_tags = normalize_tags(tags)
-    label_source = clean_tags[0] if clean_tags else problem
-    label = slugify(label_source) or "case"
-
-    seed = f"{problem}|{','.join(clean_tags)}|{timestamp}"
-    digest = sha256(seed.encode("utf-8")).hexdigest()[:8]
-
-    return f"case_{label}_{digest}"
-
-
 def slugify(value: str) -> str:
     """
-    Convert text into a compact ID-safe slug.
+    Convert text into a stable lowercase slug.
     """
-    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower())
-    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    cleaned = value.strip().lower()
+    cleaned = re.sub(r"[^a-z0-9]+", "_", cleaned)
+    cleaned = cleaned.strip("_")
 
-    if not cleaned:
-        return ""
-
-    return cleaned[:32]
+    return cleaned or "case"
 
 
-def normalize_tags(tags: list[str] | tuple[str, ...]) -> list[str]:
+def build_case_id(
+    *,
+    problem: str,
+    tags: list[str] | tuple[str, ...],
+    created_at: str,
+) -> str:
     """
-    Normalize tags into lowercase unique strings.
+    Build a deterministic readable case identifier.
     """
-    normalized: list[str] = []
+    primary_tag = "general"
+    normalized_tags = normalize_tags(tags)
+
+    if normalized_tags:
+        primary_tag = normalized_tags[0]
+
+    problem_slug = slugify(problem)[:40]
+    timestamp_slug = slugify(created_at.replace("+00:00", "z"))[:24]
+
+    return f"case_{primary_tag}_{problem_slug}_{timestamp_slug}"
+
+
+def normalize_tags(tags: list[str] | tuple[str, ...] | Any) -> list[str]:
+    """
+    Normalize tag input into unique lowercase slug-like values.
+
+    Non-list and non-tuple values produce an empty list.
+    """
+    if not isinstance(tags, (list, tuple)):
+        return []
+
+    normalized_tags: list[str] = []
 
     for tag in tags:
         if not isinstance(tag, str):
             continue
 
-        cleaned = tag.strip().lower()
+        cleaned = slugify(tag)
 
-        if cleaned and cleaned not in normalized:
-            normalized.append(cleaned)
+        if cleaned and cleaned not in normalized_tags:
+            normalized_tags.append(cleaned)
 
-    return normalized
+    return normalized_tags
 
 
 def build_memory_usage_trace(
     *,
     memory_context_used: bool = False,
-    retrieved_case_ids: list[str] | tuple[str, ...] = (),
-    retrieved_knowledge_ids: list[str] | tuple[str, ...] = (),
-    retrieved_baseline_keys: list[str] | tuple[str, ...] = (),
+    retrieved_case_ids: list[str] | tuple[str, ...] | None = None,
+    retrieved_knowledge_ids: list[str] | tuple[str, ...] | None = None,
+    retrieved_baseline_keys: list[str] | tuple[str, ...] | None = None,
     memory_influence: str = MEMORY_INFLUENCE_NONE,
-    memory_result: str = MEMORY_RESULT_NOT_USED,
-    memory_notes: list[str] | tuple[str, ...] = (),
+    memory_result: str = MEMORY_RESULT_UNKNOWN,
     memory_relevance_score: float = 0.0,
-    retrieved_memory_scores: list[JsonDict] | tuple[JsonDict, ...] = (),
+    retrieved_memory_scores: list[JsonDict] | tuple[JsonDict, ...] | None = None,
+    memory_notes: list[str] | tuple[str, ...] | None = None,
 ) -> JsonDict:
     """
-    Build a structured trace of how memory was used in a case.
-
-    This trace is for audit, scenario evaluation, and future recall tuning.
-    It should not normally be used as active recall content.
+    Build a structured trace describing how memory influenced a case.
     """
-    score = normalize_score(memory_relevance_score)
+    normalized_score = normalize_score(memory_relevance_score)
 
     return {
-        "memory_context_used": memory_context_used,
-        "retrieved_case_ids": list(retrieved_case_ids),
-        "retrieved_knowledge_ids": list(retrieved_knowledge_ids),
-        "retrieved_baseline_keys": list(retrieved_baseline_keys),
+        "memory_context_used": bool(memory_context_used),
+        "retrieved_case_ids": normalize_string_list(retrieved_case_ids),
+        "retrieved_knowledge_ids": normalize_string_list(retrieved_knowledge_ids),
+        "retrieved_baseline_keys": normalize_string_list(retrieved_baseline_keys),
         "memory_influence": memory_influence,
         "memory_result": memory_result,
-        "memory_relevance_score": score,
-        "memory_relevance_label": relevance_label_for_score(score),
-        "retrieved_memory_scores": [dict(item) for item in retrieved_memory_scores],
-        "memory_notes": list(memory_notes),
+        "memory_relevance_score": normalized_score,
+        "memory_relevance_label": relevance_label_for_score(normalized_score),
+        "retrieved_memory_scores": list(retrieved_memory_scores or []),
+        "memory_notes": normalize_string_list(memory_notes),
     }
 
 
-def validate_case_memory(case_memory: JsonDict) -> MemoryCaseValidationResult:
+def validate_case_memory(case_memory: Any) -> MemoryCaseValidationResult:
     """
-    Validate a structured Lighthouse case memory.
+    Validate a structured Lighthouse memory case.
 
-    The validator enforces the V1 case-memory shape without calling a model.
+    Invalid records are rejected with explicit errors. Warnings are reserved for
+    non-fatal quality concerns only.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -355,51 +433,65 @@ def validate_case_memory(case_memory: JsonDict) -> MemoryCaseValidationResult:
     if not isinstance(case_memory, dict):
         return MemoryCaseValidationResult(
             valid=False,
-            errors=("Case memory must be a dictionary.",),
-            warnings=(),
+            errors=("case_memory must be a dictionary.",),
         )
 
-    if contains_unsafe_memory_text(case_memory):
-        errors.append("Case memory contains unsafe or policy-bypassing text.")
+    validate_required_fields(
+        value=case_memory,
+        required_fields=REQUIRED_TOP_LEVEL_FIELDS,
+        path="case_memory",
+        errors=errors,
+    )
 
-    _require_non_empty_string(case_memory, "case_id", errors)
-    _require_non_empty_string(case_memory, "created_at", errors)
-    _require_non_empty_string(case_memory, "updated_at", errors)
+    validate_non_empty_string(
+        case_memory.get("case_id"),
+        "case_id",
+        errors,
+    )
 
-    _require_allowed_value(case_memory, "status", ALLOWED_CASE_STATUSES, errors)
-    _require_allowed_value(case_memory, "confidence", ALLOWED_CASE_CONFIDENCE, errors)
-    _require_allowed_value(case_memory, "source", ALLOWED_CASE_SOURCES, errors)
+    validate_non_empty_string(
+        case_memory.get("created_at"),
+        "created_at",
+        errors,
+    )
 
-    case_card = case_memory.get("case_card")
-    evidence = case_memory.get("evidence")
-    process_trace = case_memory.get("process_trace")
-    memory_usage_trace = case_memory.get("memory_usage_trace")
-    lifecycle = case_memory.get("lifecycle")
+    validate_non_empty_string(
+        case_memory.get("updated_at"),
+        "updated_at",
+        errors,
+    )
 
-    if not isinstance(case_card, dict):
-        errors.append("case_card must be a dictionary.")
-    else:
-        _validate_case_card(case_card, errors, warnings)
+    validate_enum_value(
+        case_memory.get("status"),
+        ALLOWED_CASE_STATUSES,
+        "status",
+        errors,
+    )
 
-    if not isinstance(evidence, dict):
-        errors.append("evidence must be a dictionary.")
-    else:
-        _validate_evidence(evidence, errors, warnings)
+    validate_enum_value(
+        case_memory.get("confidence"),
+        ALLOWED_CASE_CONFIDENCE_VALUES,
+        "confidence",
+        errors,
+    )
 
-    if not isinstance(process_trace, dict):
-        errors.append("process_trace must be a dictionary.")
-    else:
-        _validate_process_trace(process_trace, errors, warnings)
+    validate_enum_value(
+        case_memory.get("source"),
+        ALLOWED_CASE_SOURCES,
+        "source",
+        errors,
+    )
 
-    if not isinstance(memory_usage_trace, dict):
-        errors.append("memory_usage_trace must be a dictionary.")
-    else:
-        _validate_memory_usage_trace(memory_usage_trace, errors, warnings)
+    validate_case_card(case_memory.get("case_card"), errors)
+    validate_evidence(case_memory.get("evidence"), errors)
+    validate_process_trace(case_memory.get("process_trace"), errors)
+    validate_memory_usage_trace(case_memory.get("memory_usage_trace"), errors)
+    validate_lifecycle(case_memory.get("lifecycle"), errors)
 
-    if not isinstance(lifecycle, dict):
-        errors.append("lifecycle must be a dictionary.")
-    else:
-        _validate_lifecycle(lifecycle, errors, warnings)
+    unsafe_paths = find_unsafe_text_paths(case_memory)
+
+    for unsafe_path in unsafe_paths:
+        errors.append(f"{unsafe_path} contains unsafe memory text.")
 
     return MemoryCaseValidationResult(
         valid=not errors,
@@ -408,7 +500,7 @@ def validate_case_memory(case_memory: JsonDict) -> MemoryCaseValidationResult:
     )
 
 
-def is_valid_case_memory(case_memory: JsonDict) -> bool:
+def is_valid_case_memory(case_memory: Any) -> bool:
     """
     Return True when a case memory passes validation.
     """
@@ -417,649 +509,706 @@ def is_valid_case_memory(case_memory: JsonDict) -> bool:
 
 def extract_case_recall_card(case_memory: JsonDict) -> JsonDict:
     """
-    Extract the compact recall-safe view of a case memory.
+    Return a compact recall-safe card for a memory case.
 
-    This intentionally excludes process_trace and memory_usage_trace.
+    The recall card intentionally excludes process_trace and memory_usage_trace.
     """
     case_card = case_memory.get("case_card", {})
     evidence = case_memory.get("evidence", {})
     telemetry_evidence = evidence.get("telemetry_evidence", {})
-    event_evidence = evidence.get("event_evidence", {})
-    lifecycle = case_memory.get("lifecycle", {})
+
+    evidence_summary = {
+        "memory_usage_percent": telemetry_evidence.get("memory_usage_percent"),
+        "cpu_usage_percent": telemetry_evidence.get("cpu_usage_percent"),
+        "disk_usage_percent": telemetry_evidence.get("disk_usage_percent"),
+        "top_process_name": telemetry_evidence.get("top_process_name"),
+        "top_process_memory_mb": telemetry_evidence.get("top_process_memory_mb"),
+        "action_taken": evidence.get("action_taken"),
+        "outcome": evidence.get("outcome"),
+    }
 
     return {
-        "case_id": case_memory.get("case_id", ""),
-        "status": case_memory.get("status", ""),
-        "confidence": case_memory.get("confidence", ""),
-        "source": case_memory.get("source", ""),
+        "case_id": case_memory.get("case_id"),
+        "created_at": case_memory.get("created_at"),
+        "updated_at": case_memory.get("updated_at"),
+        "status": case_memory.get("status"),
+        "confidence": case_memory.get("confidence"),
+        "source": case_memory.get("source"),
         "case_card": {
-            "problem": case_card.get("problem", ""),
+            "problem": case_card.get("problem"),
             "symptoms": list(case_card.get("symptoms", [])),
-            "suspected_cause": case_card.get("suspected_cause", ""),
-            "lesson": case_card.get("lesson", ""),
+            "suspected_cause": case_card.get("suspected_cause"),
+            "lesson": case_card.get("lesson"),
             "tags": list(case_card.get("tags", [])),
         },
-        "evidence_summary": {
-            "cpu_usage_percent": telemetry_evidence.get("cpu_usage_percent"),
-            "memory_usage_percent": telemetry_evidence.get("memory_usage_percent"),
-            "disk_usage_percent": telemetry_evidence.get("disk_usage_percent"),
-            "top_process_name": telemetry_evidence.get("top_process_name"),
-            "critical_events": event_evidence.get("critical_events"),
-            "warning_events": event_evidence.get("warning_events"),
-            "action_taken": evidence.get("action_taken", ""),
-            "outcome": evidence.get("outcome", ""),
-        },
-        "lifecycle": {
-            "use_count": lifecycle.get("use_count", 0),
-            "last_used_at": lifecycle.get("last_used_at"),
-            "pinned": lifecycle.get("pinned", False),
-            "retention_policy": lifecycle.get("retention_policy", RETENTION_STANDARD),
-        },
+        "evidence_summary": evidence_summary,
+        "lifecycle": dict(case_memory.get("lifecycle", {})),
     }
 
 
 def score_case_relevance(
     case_memory: JsonDict,
+    *,
     user_request: str,
     telemetry: JsonDict | None = None,
 ) -> CaseRelevanceResult:
     """
-    Score a case memory against the current request and optional telemetry.
+    Score a case memory against a user request and optional telemetry.
 
-    This is intentionally deterministic and simple for V1.
+    The score is deterministic and bounded from 0.0 to 1.0.
     """
-    score = 0.0
+    if not is_valid_case_memory(case_memory):
+        return CaseRelevanceResult(
+            score=0.0,
+            label=RELEVANCE_LABEL_NONE,
+            reasons=("invalid_case_memory",),
+        )
+
+    request_tokens = tokenize_text(user_request)
+    searchable_text = build_case_searchable_text(case_memory)
+    case_tokens = tokenize_text(searchable_text)
+
     reasons: list[str] = []
+    score = 0.0
 
-    case_id = str(case_memory.get("case_id", "unknown_case"))
-    case_card = case_memory.get("case_card", {})
-    evidence = case_memory.get("evidence", {})
-    telemetry_evidence = evidence.get("telemetry_evidence", {})
+    if request_tokens and case_tokens:
+        overlap = sorted(request_tokens.intersection(case_tokens))
+        overlap_ratio = len(overlap) / max(len(request_tokens), 1)
 
-    request_tokens = tokenize(user_request)
-    case_tokens = tokenize_case(case_memory)
+        if overlap_ratio > 0:
+            score += min(0.45, overlap_ratio * 0.45)
+            reasons.append("request_text_match")
 
-    overlap = request_tokens.intersection(case_tokens)
-
-    if overlap:
-        overlap_score = min(0.35, len(overlap) * 0.07)
-        score += overlap_score
-        reasons.append("keyword_or_tag_match")
-
-    query_process = detect_process_name_from_text(user_request)
-    case_process = normalize_process_name(telemetry_evidence.get("top_process_name"))
-
-    current_process = ""
-
-    if telemetry:
-        current_process = normalize_process_name(extract_top_process_name(telemetry))
-
-    if query_process and case_process and query_process == case_process:
-        score += 0.25
-        reasons.append("request_process_match")
-
-    if current_process and case_process and current_process == case_process:
-        score += 0.25
-        reasons.append("telemetry_process_match")
-
-    current_memory = None
-    current_cpu = None
-    current_disk = None
-
-    if telemetry:
-        current_memory = extract_telemetry_percent(telemetry, "memory_usage_percent")
-        current_cpu = extract_telemetry_percent(telemetry, "cpu_usage_percent")
-        current_disk = extract_telemetry_percent(telemetry, "disk_usage_percent")
-
-    case_memory_percent = extract_telemetry_percent(
-        telemetry_evidence,
-        "memory_usage_percent",
+    telemetry_score, telemetry_reasons = score_telemetry_relevance(
+        case_memory,
+        telemetry or {},
     )
-    case_cpu_percent = extract_telemetry_percent(
-        telemetry_evidence,
-        "cpu_usage_percent",
-    )
-    case_disk_percent = extract_telemetry_percent(
-        telemetry_evidence,
-        "disk_usage_percent",
-    )
-
-    if both_high(current_memory, case_memory_percent, warning_at=70):
-        score += 0.18
-        reasons.append("memory_pressure_match")
-
-    if both_high(current_cpu, case_cpu_percent, warning_at=75):
-        score += 0.12
-        reasons.append("cpu_pressure_match")
-
-    if both_high(current_disk, case_disk_percent, warning_at=80):
-        score += 0.10
-        reasons.append("disk_pressure_match")
+    score += telemetry_score
+    reasons.extend(telemetry_reasons)
 
     if case_memory.get("status") == CASE_STATUS_RESOLVED:
-        score += 0.07
+        score += 0.1
         reasons.append("resolved_case")
 
-    confidence = case_memory.get("confidence")
-
-    if confidence == CASE_CONFIDENCE_HIGH:
-        score += 0.08
+    if case_memory.get("confidence") == CASE_CONFIDENCE_HIGH:
+        score += 0.1
         reasons.append("high_confidence")
-    elif confidence == CASE_CONFIDENCE_MEDIUM:
-        score += 0.04
-        reasons.append("medium_confidence")
-
-    lifecycle = case_memory.get("lifecycle", {})
-
-    if lifecycle.get("pinned") is True:
+    elif case_memory.get("confidence") == CASE_CONFIDENCE_MEDIUM:
         score += 0.05
-        reasons.append("pinned_case")
-
-    use_count = lifecycle.get("use_count", 0)
-
-    if isinstance(use_count, int) and use_count > 0:
-        score += min(0.05, use_count * 0.01)
-        reasons.append("previously_reused")
+        reasons.append("medium_confidence")
 
     normalized_score = normalize_score(score)
 
+    if normalized_score == 0.0:
+        reasons.append("no_relevance_signals")
+
     return CaseRelevanceResult(
-        case_id=case_id,
         score=normalized_score,
         label=relevance_label_for_score(normalized_score),
-        reasons=tuple(reasons),
+        reasons=tuple(dedupe_strings(reasons)),
     )
 
 
 def sort_cases_by_relevance(
     case_memories: list[JsonDict] | tuple[JsonDict, ...],
+    *,
     user_request: str,
     telemetry: JsonDict | None = None,
-    limit: int = 3,
+    limit: int = 0,
 ) -> list[tuple[JsonDict, CaseRelevanceResult]]:
     """
-    Return the most relevant cases and their relevance scores.
+    Return case memories sorted by deterministic relevance.
+
+    Ordering is by highest score first, then case_id for stable tie-breaking.
     """
-    scored_cases = [
-        (
+    scored_cases: list[tuple[JsonDict, CaseRelevanceResult]] = []
+
+    for case_memory in case_memories:
+        relevance = score_case_relevance(
             case_memory,
-            score_case_relevance(
-                case_memory=case_memory,
-                user_request=user_request,
-                telemetry=telemetry,
-            ),
+            user_request=user_request,
+            telemetry=telemetry,
         )
-        for case_memory in case_memories
-    ]
+        scored_cases.append((case_memory, relevance))
 
-    scored_cases.sort(key=lambda item: item[1].score, reverse=True)
+    scored_cases.sort(
+        key=lambda item: (
+            -item[1].score,
+            str(item[0].get("case_id", "")),
+        )
+    )
 
-    if limit <= 0:
-        return scored_cases
+    if limit > 0:
+        return scored_cases[:limit]
 
-    return scored_cases[:limit]
+    return scored_cases
 
 
-def tokenize(value: str) -> set[str]:
+def validate_case_card(value: Any, errors: list[str]) -> None:
     """
-    Tokenize text for simple deterministic matching.
+    Validate the case_card section.
+    """
+    if not isinstance(value, dict):
+        errors.append("case_card must be a dictionary.")
+        return
+
+    validate_required_fields(
+        value=value,
+        required_fields=REQUIRED_CASE_CARD_FIELDS,
+        path="case_card",
+        errors=errors,
+    )
+
+    validate_non_empty_string(value.get("problem"), "case_card.problem", errors)
+    validate_non_empty_string(
+        value.get("suspected_cause"),
+        "case_card.suspected_cause",
+        errors,
+    )
+    validate_non_empty_string(value.get("lesson"), "case_card.lesson", errors)
+
+    symptoms = value.get("symptoms")
+
+    if not is_non_empty_string_list(symptoms):
+        errors.append("case_card.symptoms must be a non-empty list of strings.")
+
+    tags = value.get("tags")
+
+    if not is_non_empty_string_list(tags):
+        errors.append("case_card.tags must be a non-empty list of strings.")
+
+
+def validate_evidence(value: Any, errors: list[str]) -> None:
+    """
+    Validate the evidence section.
+    """
+    if not isinstance(value, dict):
+        errors.append("evidence must be a dictionary.")
+        return
+
+    validate_required_fields(
+        value=value,
+        required_fields=REQUIRED_EVIDENCE_FIELDS,
+        path="evidence",
+        errors=errors,
+    )
+
+    telemetry_evidence = value.get("telemetry_evidence")
+
+    if not isinstance(telemetry_evidence, dict) or not telemetry_evidence:
+        errors.append("evidence.telemetry_evidence must be a non-empty dictionary.")
+
+    event_evidence = value.get("event_evidence")
+
+    if not isinstance(event_evidence, dict):
+        errors.append("evidence.event_evidence must be a dictionary.")
+
+    validate_non_empty_string(
+        value.get("action_taken"),
+        "evidence.action_taken",
+        errors,
+    )
+    validate_non_empty_string(value.get("outcome"), "evidence.outcome", errors)
+
+
+def validate_process_trace(value: Any, errors: list[str]) -> None:
+    """
+    Validate the process_trace section.
+    """
+    if not isinstance(value, dict):
+        errors.append("process_trace must be a dictionary.")
+        return
+
+    validate_required_fields(
+        value=value,
+        required_fields=REQUIRED_PROCESS_TRACE_FIELDS,
+        path="process_trace",
+        errors=errors,
+    )
+
+    diagnostic_steps = value.get("diagnostic_steps")
+
+    if not is_string_list(diagnostic_steps):
+        errors.append("process_trace.diagnostic_steps must be a list of strings.")
+
+    decision_notes = value.get("decision_notes")
+
+    if not is_string_list(decision_notes):
+        errors.append("process_trace.decision_notes must be a list of strings.")
+
+    operator_feedback = value.get("operator_feedback")
+
+    if not isinstance(operator_feedback, str):
+        errors.append("process_trace.operator_feedback must be a string.")
+
+
+def validate_memory_usage_trace(value: Any, errors: list[str]) -> None:
+    """
+    Validate the memory_usage_trace section.
+    """
+    if not isinstance(value, dict):
+        errors.append("memory_usage_trace must be a dictionary.")
+        return
+
+    validate_required_fields(
+        value=value,
+        required_fields=REQUIRED_MEMORY_USAGE_TRACE_FIELDS,
+        path="memory_usage_trace",
+        errors=errors,
+    )
+
+    memory_context_used = value.get("memory_context_used")
+
+    if not isinstance(memory_context_used, bool):
+        errors.append("memory_usage_trace.memory_context_used must be a boolean.")
+
+    retrieved_case_ids = value.get("retrieved_case_ids")
+    retrieved_knowledge_ids = value.get("retrieved_knowledge_ids")
+    retrieved_baseline_keys = value.get("retrieved_baseline_keys")
+    retrieved_memory_scores = value.get("retrieved_memory_scores")
+    memory_notes = value.get("memory_notes")
+
+    if not is_string_list(retrieved_case_ids):
+        errors.append("memory_usage_trace.retrieved_case_ids must be a list of strings.")
+
+    if not is_string_list(retrieved_knowledge_ids):
+        errors.append(
+            "memory_usage_trace.retrieved_knowledge_ids must be a list of strings."
+        )
+
+    if not is_string_list(retrieved_baseline_keys):
+        errors.append(
+            "memory_usage_trace.retrieved_baseline_keys must be a list of strings."
+        )
+
+    if not isinstance(retrieved_memory_scores, list):
+        errors.append("memory_usage_trace.retrieved_memory_scores must be a list.")
+
+    if not is_string_list(memory_notes):
+        errors.append("memory_usage_trace.memory_notes must be a list of strings.")
+
+    validate_enum_value(
+        value.get("memory_influence"),
+        ALLOWED_MEMORY_INFLUENCE_VALUES,
+        "memory_usage_trace.memory_influence",
+        errors,
+    )
+
+    validate_enum_value(
+        value.get("memory_result"),
+        ALLOWED_MEMORY_RESULT_VALUES,
+        "memory_usage_trace.memory_result",
+        errors,
+    )
+
+    relevance_score = value.get("memory_relevance_score")
+
+    if isinstance(relevance_score, bool) or not isinstance(relevance_score, (int, float)):
+        errors.append("memory_usage_trace.memory_relevance_score must be numeric.")
+    elif relevance_score < 0.0 or relevance_score > 1.0:
+        errors.append(
+            "memory_usage_trace.memory_relevance_score must be between 0.0 and 1.0."
+        )
+
+    validate_enum_value(
+        value.get("memory_relevance_label"),
+        ALLOWED_RELEVANCE_LABELS,
+        "memory_usage_trace.memory_relevance_label",
+        errors,
+    )
+
+    validate_memory_usage_trace_contradictions(value, errors)
+
+
+def validate_memory_usage_trace_contradictions(
+    value: JsonDict,
+    errors: list[str],
+) -> None:
+    """
+    Reject logically contradictory memory usage traces.
+    """
+    memory_context_used = value.get("memory_context_used")
+    memory_influence = value.get("memory_influence")
+    memory_result = value.get("memory_result")
+    relevance_score = value.get("memory_relevance_score")
+    relevance_label = value.get("memory_relevance_label")
+    retrieved_case_ids = value.get("retrieved_case_ids")
+    retrieved_knowledge_ids = value.get("retrieved_knowledge_ids")
+    retrieved_baseline_keys = value.get("retrieved_baseline_keys")
+    retrieved_memory_scores = value.get("retrieved_memory_scores")
+
+    if memory_context_used is False:
+        if retrieved_case_ids:
+            errors.append(
+                "memory_usage_trace.memory_context_used is false but "
+                "retrieved_case_ids is non-empty."
+            )
+
+        if retrieved_knowledge_ids:
+            errors.append(
+                "memory_usage_trace.memory_context_used is false but "
+                "retrieved_knowledge_ids is non-empty."
+            )
+
+        if retrieved_baseline_keys:
+            errors.append(
+                "memory_usage_trace.memory_context_used is false but "
+                "retrieved_baseline_keys is non-empty."
+            )
+
+        if memory_result == MEMORY_RESULT_HELPFUL:
+            errors.append(
+                "memory_usage_trace.memory_context_used is false but "
+                "memory_result is helpful."
+            )
+
+        if memory_influence != MEMORY_INFLUENCE_NONE:
+            errors.append(
+                "memory_usage_trace.memory_context_used is false but "
+                "memory_influence is not none."
+            )
+
+    if memory_result == MEMORY_RESULT_NOT_USED and retrieved_memory_scores:
+        errors.append(
+            "memory_usage_trace.memory_result is not_used but "
+            "retrieved_memory_scores is non-empty."
+        )
+
+    if relevance_score == 0.0 and relevance_label == RELEVANCE_LABEL_EXACT:
+        errors.append(
+            "memory_usage_trace.memory_relevance_score is 0.0 but "
+            "memory_relevance_label is exact."
+        )
+
+    if isinstance(relevance_score, (int, float)) and not isinstance(relevance_score, bool):
+        expected_label = relevance_label_for_score(relevance_score)
+
+        if relevance_label != expected_label:
+            errors.append(
+                "memory_usage_trace.memory_relevance_label does not match "
+                "memory_relevance_score."
+            )
+
+
+def validate_lifecycle(value: Any, errors: list[str]) -> None:
+    """
+    Validate the lifecycle section.
+    """
+    if not isinstance(value, dict):
+        errors.append("lifecycle must be a dictionary.")
+        return
+
+    validate_required_fields(
+        value=value,
+        required_fields=REQUIRED_LIFECYCLE_FIELDS,
+        path="lifecycle",
+        errors=errors,
+    )
+
+    use_count = value.get("use_count")
+
+    if isinstance(use_count, bool) or not isinstance(use_count, int):
+        errors.append("lifecycle.use_count must be an integer.")
+    elif use_count < 0:
+        errors.append("lifecycle.use_count must be greater than or equal to 0.")
+
+    last_used_at = value.get("last_used_at")
+
+    if last_used_at is not None and not isinstance(last_used_at, str):
+        errors.append("lifecycle.last_used_at must be null or a string.")
+
+    pinned = value.get("pinned")
+
+    if not isinstance(pinned, bool):
+        errors.append("lifecycle.pinned must be a boolean.")
+
+    retention_policy = value.get("retention_policy")
+
+    validate_enum_value(
+        retention_policy,
+        ALLOWED_RETENTION_POLICIES,
+        "lifecycle.retention_policy",
+        errors,
+    )
+
+    if pinned is True and retention_policy != RETENTION_PINNED:
+        errors.append(
+            "lifecycle.pinned is true but lifecycle.retention_policy is not pinned."
+        )
+
+    if pinned is False and retention_policy == RETENTION_PINNED:
+        errors.append(
+            "lifecycle.pinned is false but lifecycle.retention_policy is pinned."
+        )
+
+
+def validate_required_fields(
+    *,
+    value: JsonDict,
+    required_fields: set[str],
+    path: str,
+    errors: list[str],
+) -> None:
+    """
+    Validate that all required fields exist.
+    """
+    for field_name in sorted(required_fields):
+        if field_name not in value:
+            errors.append(f"{path}.{field_name} is required.")
+
+
+def validate_non_empty_string(
+    value: Any,
+    path: str,
+    errors: list[str],
+) -> None:
+    """
+    Validate a non-empty string field.
+    """
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{path} must be a non-empty string.")
+
+
+def validate_enum_value(
+    value: Any,
+    allowed_values: set[str],
+    path: str,
+    errors: list[str],
+) -> None:
+    """
+    Validate that a value is one of the allowed enum values.
+    """
+    if not isinstance(value, str) or value not in allowed_values:
+        allowed = ", ".join(sorted(allowed_values))
+        errors.append(f"{path} must be one of: {allowed}.")
+
+
+def normalize_string_list(value: list[str] | tuple[str, ...] | None) -> list[str]:
+    """
+    Normalize optional string-list input.
+    """
+    if value is None:
+        return []
+
+    if not isinstance(value, (list, tuple)):
+        return []
+
+    normalized_values: list[str] = []
+
+    for item in value:
+        if isinstance(item, str):
+            cleaned = item.strip()
+
+            if cleaned:
+                normalized_values.append(cleaned)
+
+    return normalized_values
+
+
+def is_string_list(value: Any) -> bool:
+    """
+    Return True when value is a list of strings.
+    """
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def is_non_empty_string_list(value: Any) -> bool:
+    """
+    Return True when value is a non-empty list of non-empty strings.
+    """
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, str) and bool(item.strip()) for item in value)
+    )
+
+
+def find_unsafe_text_paths(value: Any, *, path: str = "") -> list[str]:
+    """
+    Return paths to strings containing unsafe memory text.
+    """
+    unsafe_paths: list[str] = []
+
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            nested_path = f"{path}.{key}" if path else str(key)
+            unsafe_paths.extend(find_unsafe_text_paths(nested_value, path=nested_path))
+
+        return unsafe_paths
+
+    if isinstance(value, list):
+        for index, nested_value in enumerate(value):
+            nested_path = f"{path}[{index}]"
+            unsafe_paths.extend(find_unsafe_text_paths(nested_value, path=nested_path))
+
+        return unsafe_paths
+
+    if isinstance(value, str):
+        lowered = value.lower()
+
+        for unsafe_pattern in UNSAFE_MEMORY_TEXT_PATTERNS:
+            if unsafe_pattern in lowered:
+                unsafe_paths.append(path or "value")
+                break
+
+    return unsafe_paths
+
+
+def tokenize_text(value: str) -> set[str]:
+    """
+    Tokenize text for deterministic relevance scoring.
     """
     if not isinstance(value, str):
         return set()
 
-    raw_tokens = re.findall(r"[a-zA-Z0-9_\\.]+", value.lower())
-    tokens: set[str] = set()
-
-    for token in raw_tokens:
-        cleaned = token.strip("._")
-
-        if not cleaned or cleaned in STOPWORDS:
-            continue
-
-        tokens.add(cleaned)
-
-        if cleaned.endswith(".exe"):
-            tokens.add(cleaned.removesuffix(".exe"))
+    tokens = {
+        token
+        for token in re.split(r"[^a-zA-Z0-9_]+", value.lower())
+        if token and token not in STOPWORDS
+    }
 
     return tokens
 
 
-def tokenize_case(case_memory: JsonDict) -> set[str]:
+def build_case_searchable_text(case_memory: JsonDict) -> str:
     """
-    Tokenize the recall-relevant fields of a case memory.
+    Build searchable text from recall-safe case fields.
     """
     case_card = case_memory.get("case_card", {})
     evidence = case_memory.get("evidence", {})
     telemetry_evidence = evidence.get("telemetry_evidence", {})
 
-    parts: list[str] = [
-        str(case_card.get("problem", "")),
-        str(case_card.get("suspected_cause", "")),
-        str(case_card.get("lesson", "")),
+    parts = [
+        case_memory.get("case_id", ""),
+        case_memory.get("status", ""),
+        case_memory.get("confidence", ""),
+        case_card.get("problem", ""),
+        case_card.get("suspected_cause", ""),
+        case_card.get("lesson", ""),
+        " ".join(case_card.get("symptoms", [])),
+        " ".join(case_card.get("tags", [])),
+        evidence.get("action_taken", ""),
+        evidence.get("outcome", ""),
         str(telemetry_evidence.get("top_process_name", "")),
-        str(evidence.get("action_taken", "")),
-        str(evidence.get("outcome", "")),
     ]
 
-    symptoms = case_card.get("symptoms", [])
-    tags = case_card.get("tags", [])
-
-    if isinstance(symptoms, list):
-        parts.extend(str(symptom) for symptom in symptoms)
-
-    if isinstance(tags, list):
-        parts.extend(str(tag) for tag in tags)
-
-    return tokenize(" ".join(parts))
+    return " ".join(str(part) for part in parts if part)
 
 
-def detect_process_name_from_text(value: str) -> str:
+def score_telemetry_relevance(
+    case_memory: JsonDict,
+    telemetry: JsonDict,
+) -> tuple[float, list[str]]:
     """
-    Detect a common process name from request text.
+    Score telemetry similarity between current telemetry and a memory case.
     """
-    tokens = tokenize(value)
+    if not telemetry:
+        return 0.0, []
 
-    process_aliases = {
-        "chrome": "chrome.exe",
-        "google": "chrome.exe",
-        "edge": "msedge.exe",
-        "msedge": "msedge.exe",
-        "firefox": "firefox.exe",
-        "brave": "brave.exe",
-        "code": "code.exe",
-        "vscode": "code.exe",
-        "teams": "teams.exe",
-        "discord": "discord.exe",
-        "spotify": "spotify.exe",
-        "notepad": "notepad.exe",
-    }
+    evidence = case_memory.get("evidence", {})
+    telemetry_evidence = evidence.get("telemetry_evidence", {})
 
-    for token in tokens:
-        if token in process_aliases:
-            return process_aliases[token]
+    score = 0.0
+    reasons: list[str] = []
 
-        if token.endswith(".exe"):
-            return token
+    current_top_process = extract_top_process_name(telemetry)
+    case_top_process = telemetry_evidence.get("top_process_name")
 
-    return ""
+    if current_top_process and case_top_process:
+        if str(current_top_process).lower() == str(case_top_process).lower():
+            score += 0.2
+            reasons.append("telemetry_process_match")
 
+    current_memory_percent = extract_memory_usage_percent(telemetry)
+    case_memory_percent = telemetry_evidence.get("memory_usage_percent")
 
-def normalize_process_name(value: Any) -> str:
-    """
-    Normalize a process name.
-    """
-    if not isinstance(value, str):
-        return ""
+    if is_high_memory(current_memory_percent) and is_high_memory(case_memory_percent):
+        score += 0.15
+        reasons.append("memory_pressure_match")
 
-    cleaned = value.strip().lower()
+    current_cpu_percent = extract_cpu_usage_percent(telemetry)
+    case_cpu_percent = telemetry_evidence.get("cpu_usage_percent")
 
-    if not cleaned:
-        return ""
+    if is_low_cpu(current_cpu_percent) and is_low_cpu(case_cpu_percent):
+        score += 0.05
+        reasons.append("low_cpu_pattern_match")
 
-    if "." not in cleaned:
-        return f"{cleaned}.exe"
-
-    return cleaned
+    return score, reasons
 
 
 def extract_top_process_name(telemetry: JsonDict) -> str:
     """
-    Extract a top process name from either evidence-style or telemetry-style data.
+    Extract the top process name from telemetry.
     """
-    direct = telemetry.get("top_process_name")
-
-    if isinstance(direct, str) and direct.strip():
-        return direct
-
     processes = telemetry.get("processes", {})
+    process_list = processes.get("processes", [])
 
-    if isinstance(processes, dict):
-        process_list = processes.get("processes", [])
+    if not isinstance(processes, dict):
+        return ""
 
-        if isinstance(process_list, list) and process_list:
-            first = process_list[0]
+    if not isinstance(process_list, list) or not process_list:
+        return ""
 
-            if isinstance(first, dict):
-                name = first.get("name")
+    top_process = process_list[0]
 
-                if isinstance(name, str):
-                    return name
+    if not isinstance(top_process, dict):
+        return ""
 
-    return ""
+    name = top_process.get("name", "")
+
+    return str(name)
 
 
-def extract_telemetry_percent(telemetry: JsonDict, field_name: str) -> float | None:
+def extract_memory_usage_percent(telemetry: JsonDict) -> float | None:
     """
-    Extract a telemetry percentage from evidence-style or telemetry-style data.
+    Extract memory usage percent from telemetry.
     """
-    direct = telemetry.get(field_name)
+    memory = telemetry.get("memory", {})
 
-    if isinstance(direct, (int, float)) and not isinstance(direct, bool):
-        return float(direct)
-
-    nested_map = {
-        "cpu_usage_percent": ("cpu", "usage_percent"),
-        "memory_usage_percent": ("memory", "usage_percent"),
-        "disk_usage_percent": ("disk", "usage_percent"),
-    }
-
-    nested = nested_map.get(field_name)
-
-    if not nested:
+    if not isinstance(memory, dict):
         return None
 
-    group_name, key_name = nested
-    group = telemetry.get(group_name, {})
+    value = memory.get("usage_percent")
 
-    if not isinstance(group, dict):
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def extract_cpu_usage_percent(telemetry: JsonDict) -> float | None:
+    """
+    Extract CPU usage percent from telemetry.
+    """
+    cpu = telemetry.get("cpu", {})
+
+    if not isinstance(cpu, dict):
         return None
 
-    value = group.get(key_name)
+    value = cpu.get("usage_percent")
 
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-
-    return None
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def both_high(
-    current_value: float | None,
-    case_value: float | None,
-    *,
-    warning_at: float,
-) -> bool:
+def is_high_memory(value: Any) -> bool:
     """
-    Return True when both current and case telemetry show pressure.
+    Return True when memory usage is high enough to indicate pressure.
     """
-    if current_value is None or case_value is None:
-        return False
-
-    return current_value >= warning_at and case_value >= warning_at
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 75
 
 
-def contains_unsafe_memory_text(value: Any) -> bool:
+def is_low_cpu(value: Any) -> bool:
     """
-    Return True if any nested string contains unsafe memory text.
+    Return True when CPU usage is low.
     """
-    for text in iter_nested_strings(value):
-        lowered = text.lower()
-
-        for phrase in UNSAFE_MEMORY_PHRASES:
-            if phrase in lowered:
-                return True
-
-    return False
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value <= 20
 
 
-def iter_nested_strings(value: Any) -> tuple[str, ...]:
+def dedupe_strings(values: list[str] | tuple[str, ...]) -> list[str]:
     """
-    Collect nested strings from a JSON-like value.
+    Return values without duplicates while preserving order.
     """
-    strings: list[str] = []
+    deduped: list[str] = []
 
-    def walk(item: Any) -> None:
-        if isinstance(item, str):
-            strings.append(item)
-            return
+    for value in values:
+        if value not in deduped:
+            deduped.append(value)
 
-        if isinstance(item, dict):
-            for nested in item.values():
-                walk(nested)
-            return
-
-        if isinstance(item, list | tuple):
-            for nested in item:
-                walk(nested)
-
-    walk(value)
-
-    return tuple(strings)
-
-
-def _validate_case_card(
-    case_card: JsonDict,
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    _require_non_empty_string(case_card, "problem", errors)
-    _require_string_list(case_card, "symptoms", errors, require_non_empty=True)
-    _require_non_empty_string(case_card, "suspected_cause", errors)
-    _require_non_empty_string(case_card, "lesson", errors)
-    _require_string_list(case_card, "tags", errors, require_non_empty=True)
-
-    tags = case_card.get("tags", [])
-
-    if isinstance(tags, list):
-        normalized = normalize_tags(tags)
-
-        if len(normalized) != len(tags):
-            warnings.append("case_card.tags contains duplicate or non-normalized values.")
-
-
-def _validate_evidence(
-    evidence: JsonDict,
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    telemetry_evidence = evidence.get("telemetry_evidence")
-    event_evidence = evidence.get("event_evidence")
-
-    if not isinstance(telemetry_evidence, dict):
-        errors.append("evidence.telemetry_evidence must be a dictionary.")
-    else:
-        if not telemetry_evidence:
-            errors.append("evidence.telemetry_evidence must not be empty.")
-
-        if telemetry_evidence.get("memory_usage_percent") is None:
-            warnings.append("telemetry_evidence.memory_usage_percent is missing.")
-
-    if not isinstance(event_evidence, dict):
-        errors.append("evidence.event_evidence must be a dictionary.")
-
-    _require_non_empty_string(evidence, "action_taken", errors)
-    _require_non_empty_string(evidence, "outcome", errors)
-
-
-def _validate_process_trace(
-    process_trace: JsonDict,
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    _require_string_list(process_trace, "diagnostic_steps", errors, require_non_empty=True)
-    _require_string_list(process_trace, "decision_notes", errors, require_non_empty=True)
-
-    operator_feedback = process_trace.get("operator_feedback")
-
-    if operator_feedback is not None and not isinstance(operator_feedback, str):
-        errors.append("process_trace.operator_feedback must be a string when present.")
-
-    if operator_feedback is None:
-        warnings.append("process_trace.operator_feedback is missing.")
-
-
-def _validate_memory_usage_trace(
-    memory_usage_trace: JsonDict,
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    if not isinstance(memory_usage_trace.get("memory_context_used"), bool):
-        errors.append("memory_usage_trace.memory_context_used must be a boolean.")
-
-    _require_string_list(memory_usage_trace, "retrieved_case_ids", errors)
-    _require_string_list(memory_usage_trace, "retrieved_knowledge_ids", errors)
-    _require_string_list(memory_usage_trace, "retrieved_baseline_keys", errors)
-
-    _require_allowed_value(
-        memory_usage_trace,
-        "memory_influence",
-        ALLOWED_MEMORY_INFLUENCE,
-        errors,
-    )
-    _require_allowed_value(
-        memory_usage_trace,
-        "memory_result",
-        ALLOWED_MEMORY_RESULTS,
-        errors,
-    )
-
-    relevance_score = memory_usage_trace.get("memory_relevance_score")
-
-    if not is_score(relevance_score):
-        errors.append("memory_usage_trace.memory_relevance_score must be between 0.0 and 1.0.")
-
-    _require_allowed_value(
-        memory_usage_trace,
-        "memory_relevance_label",
-        ALLOWED_RELEVANCE_LABELS,
-        errors,
-    )
-
-    expected_label = relevance_label_for_score(normalize_score(relevance_score))
-
-    if memory_usage_trace.get("memory_relevance_label") != expected_label:
-        warnings.append("memory_usage_trace.memory_relevance_label does not match score.")
-
-    retrieved_memory_scores = memory_usage_trace.get("retrieved_memory_scores")
-
-    if not isinstance(retrieved_memory_scores, list):
-        errors.append("memory_usage_trace.retrieved_memory_scores must be a list.")
-    else:
-        for index, item in enumerate(retrieved_memory_scores):
-            _validate_retrieved_memory_score(item, index, errors)
-
-    _require_string_list(memory_usage_trace, "memory_notes", errors)
-
-    if (
-        memory_usage_trace.get("memory_context_used") is True
-        and normalize_score(relevance_score) == 0
-    ):
-        warnings.append("memory context was used but relevance score is 0.")
-
-
-def _validate_retrieved_memory_score(
-    item: Any,
-    index: int,
-    errors: list[str],
-) -> None:
-    if not isinstance(item, dict):
-        errors.append(f"retrieved_memory_scores[{index}] must be a dictionary.")
-        return
-
-    _require_non_empty_string(item, "memory_id", errors)
-
-    _require_allowed_value(
-        item,
-        "memory_type",
-        ALLOWED_RETRIEVED_MEMORY_TYPES,
-        errors,
-        field_label=f"retrieved_memory_scores[{index}].memory_type",
-    )
-
-    relevance_score = item.get("relevance_score")
-
-    if not is_score(relevance_score):
-        errors.append(
-            f"retrieved_memory_scores[{index}].relevance_score must be between 0.0 and 1.0."
-        )
-
-    _require_allowed_value(
-        item,
-        "relevance_label",
-        ALLOWED_RELEVANCE_LABELS,
-        errors,
-        field_label=f"retrieved_memory_scores[{index}].relevance_label",
-    )
-
-    _require_string_list(
-        item,
-        "match_reasons",
-        errors,
-        field_label=f"retrieved_memory_scores[{index}].match_reasons",
-    )
-
-
-def _validate_lifecycle(
-    lifecycle: JsonDict,
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    use_count = lifecycle.get("use_count")
-
-    if not isinstance(use_count, int) or isinstance(use_count, bool) or use_count < 0:
-        errors.append("lifecycle.use_count must be a non-negative integer.")
-
-    if not isinstance(lifecycle.get("pinned"), bool):
-        errors.append("lifecycle.pinned must be a boolean.")
-
-    _require_allowed_value(
-        lifecycle,
-        "retention_policy",
-        ALLOWED_RETENTION_POLICIES,
-        errors,
-    )
-
-    if lifecycle.get("pinned") is True and lifecycle.get("retention_policy") != RETENTION_PINNED:
-        warnings.append("Pinned case should usually use pinned retention policy.")
-
-
-def _require_non_empty_string(
-    payload: JsonDict,
-    field_name: str,
-    errors: list[str],
-) -> None:
-    value = payload.get(field_name)
-
-    if not isinstance(value, str) or not value.strip():
-        errors.append(f"{field_name} must be a non-empty string.")
-
-
-def _require_allowed_value(
-    payload: JsonDict,
-    field_name: str,
-    allowed_values: set[str],
-    errors: list[str],
-    field_label: str | None = None,
-) -> None:
-    value = payload.get(field_name)
-    label = field_label or field_name
-
-    if value not in allowed_values:
-        allowed = ", ".join(sorted(allowed_values))
-        errors.append(f"{label} must be one of: {allowed}.")
-
-
-def _require_string_list(
-    payload: JsonDict,
-    field_name: str,
-    errors: list[str],
-    *,
-    require_non_empty: bool = False,
-    field_label: str | None = None,
-) -> None:
-    value = payload.get(field_name)
-    label = field_label or field_name
-
-    if not isinstance(value, list):
-        errors.append(f"{label} must be a list of strings.")
-        return
-
-    if require_non_empty and not value:
-        errors.append(f"{label} must not be empty.")
-        return
-
-    for index, item in enumerate(value):
-        if not isinstance(item, str) or not item.strip():
-            errors.append(f"{label}[{index}] must be a non-empty string.")
-
-
-def is_score(value: Any) -> bool:
-    """
-    Return True when a value is a valid 0.0 to 1.0 score.
-    """
-    if isinstance(value, bool):
-        return False
-
-    if not isinstance(value, (int, float)):
-        return False
-
-    return 0.0 <= float(value) <= 1.0
+    return deduped
