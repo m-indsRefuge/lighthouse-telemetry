@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 .venv/
 logs/
@@ -8,3 +8,4 @@ data/
 # Lighthouse local Operator trace/feedback data
 memory/operator_interactions.jsonl
 memory/operator_feedback.jsonl
+memory/datasets/*.jsonl

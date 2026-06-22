@@ -29,6 +29,10 @@ from app.services.operator_interaction_journal import (
     record_operator_feedback,
     record_operator_interaction,
 )
+from app.services.operator_dataset_export import (
+    export_operator_route_dataset,
+    format_operator_dataset_export_report,
+)
 from app.services.operator_routes import (
     build_operator_routes_report,
     validate_route_handoff_for_autorun,
@@ -101,6 +105,7 @@ def print_help() -> None:
     print("interactions Show recent Operator interaction traces")
     print("feedback labels Show valid Operator feedback labels")
     print("feedback <trace_id> <label> [note] Save feedback for an interaction")
+    print("dataset operator Export Operator route dataset")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -138,6 +143,7 @@ def print_help() -> None:
     print("- interactions")
     print("- feedback labels")
     print("- feedback optrace-example useful routed correctly")
+    print("- dataset operator")
     print("- journal")
 
 
@@ -1293,6 +1299,14 @@ def print_trace_id_from_journal_result(journal_result: dict[str, Any]) -> None:
         print(f"Trace ID: {data['trace_id']}")
 
 
+def print_operator_dataset_export_report() -> None:
+    """
+    Export and print the Operator route dataset report.
+    """
+    result = export_operator_route_dataset()
+    print(format_operator_dataset_export_report(result))
+
+
 def print_operator_routes_report() -> None:
     """
     Print the Operator route registry and policy validation report.
@@ -1358,6 +1372,19 @@ def run_canonical_command(command: str) -> str:
 
     if normalized_command in {"routes", "route", "operator routes", "route policy"}:
         print_operator_routes_report()
+        return "handled"
+
+    if normalized_command in {
+        "dataset operator",
+        "operator dataset",
+        "export operator dataset",
+        "dataset export operator",
+    }:
+        print_operator_dataset_export_report()
+        return "handled"
+
+    if normalized_command in {"dataset", "datasets", "export dataset"}:
+        print("Usage: dataset operator")
         return "handled"
 
     if normalized_command in {"interactions", "interaction", "operator interactions"}:
