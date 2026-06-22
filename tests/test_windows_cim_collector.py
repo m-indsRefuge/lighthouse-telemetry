@@ -18,6 +18,8 @@ from app.collectors.windows.cim import (
     build_cim_script,
     collect_cim_class_evidence,
     collect_windows_cim_evidence,
+    normalize_cim_json_date,
+    normalize_cim_value,
     parse_cim_json,
 )
 from app.services.windows_evidence import is_valid_windows_evidence_item
@@ -30,7 +32,7 @@ def fake_cim_runner(script: str) -> str:
                 "Caption": "Microsoft Windows 11 Pro",
                 "Version": "10.0.22631",
                 "BuildNumber": "22631",
-                "LastBootUpTime": "2026-06-22T08:13:00",
+                "LastBootUpTime": "/Date(1781948273961)/",
                 "OSArchitecture": "64-bit",
             }
         )
@@ -50,7 +52,7 @@ def fake_cim_runner(script: str) -> str:
             {
                 "Manufacturer": "Example BIOS",
                 "SMBIOSBIOSVersion": "1.0.0",
-                "ReleaseDate": "2026-01-01T00:00:00",
+                "ReleaseDate": "/Date(1736899200000)/",
             }
         )
 
@@ -119,6 +121,22 @@ def test_parse_cim_json_accepts_list_of_objects() -> None:
     assert records == [{"Name": "A"}, {"Name": "B"}]
 
 
+def test_normalize_cim_json_date_converts_powershell_json_date() -> None:
+    normalized = normalize_cim_json_date("/Date(1736899200000)/")
+
+    assert normalized == "2025-01-15T00:00:00+00:00"
+
+
+def test_normalize_cim_json_date_preserves_non_matching_string() -> None:
+    assert normalize_cim_json_date("2026-06-22T08:13:00") == "2026-06-22T08:13:00"
+
+
+def test_normalize_cim_value_only_changes_cim_json_dates() -> None:
+    assert normalize_cim_value("/Date(1736899200000)/") == "2025-01-15T00:00:00+00:00"
+    assert normalize_cim_value("LENOVO") == "LENOVO"
+    assert normalize_cim_value(20) == 20
+
+
 def test_collect_cim_class_evidence_rejects_unapproved_class() -> None:
     result = collect_cim_class_evidence(
         class_name="Win32_Process",
@@ -146,6 +164,14 @@ def test_collect_cim_class_evidence_returns_normalized_items() -> None:
     assert "last_boot_time" in signals
     assert all(is_valid_windows_evidence_item(item) for item in result["evidence_items"])
 
+    last_boot_items = [
+        item
+        for item in result["evidence_items"]
+        if item["signal"] == "last_boot_time"
+    ]
+    assert last_boot_items[0]["value"] == "2026-06-20T08:17:53.961000+00:00"
+    assert last_boot_items[0]["raw"]["raw_value"] == "/Date(1781948273961)/"
+
 
 def test_collect_windows_cim_evidence_collects_all_approved_classes() -> None:
     result = collect_windows_cim_evidence(runner=fake_cim_runner)
@@ -164,6 +190,13 @@ def test_collect_windows_cim_evidence_collects_all_approved_classes() -> None:
     assert "logical_disk_free_space_bytes" in signals
     assert "physical_memory_capacity_bytes" in signals
     assert result["summary"]["status"] == "ok"
+
+    bios_release_items = [
+        item
+        for item in result["evidence_items"]
+        if item["signal"] == "bios_release_date"
+    ]
+    assert bios_release_items[0]["value"] == "2025-01-15T00:00:00+00:00"
 
 
 def test_collect_windows_cim_evidence_handles_partial_errors() -> None:
@@ -184,6 +217,7 @@ def test_collect_windows_cim_evidence_handles_partial_errors() -> None:
     )
     assert result["summary"]["data"]["total_items"] > 0
 
+
 def test_collect_cim_class_evidence_formats_timeout_error() -> None:
     def timeout_runner(script: str) -> str:
         raise subprocess.TimeoutExpired(cmd="Get-CimInstance", timeout=45)
@@ -201,4 +235,3 @@ def test_collect_cim_class_evidence_formats_timeout_error() -> None:
     assert result["evidence_items"][0]["errors"] == [
         "CIM query timed out for Win32_OperatingSystem after 45 seconds."
     ]
-
