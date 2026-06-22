@@ -3,6 +3,8 @@ Tests for Lighthouse CLI Operator conversation bridge wiring.
 
 The talk command should interpret natural Operator input and recommend safe
 Lighthouse routes without executing the recommended command.
+
+The talkrun command may auto-run only safe read-only diagnostic runplan routes.
 """
 
 from pathlib import Path
@@ -108,3 +110,132 @@ def test_run_canonical_command_handles_talk(capsys) -> None:
     assert "LIGHTHOUSE TALK" in output
     assert "Intent: os_action_request" in output
     assert "No command was executed by talk." in output
+
+
+def test_talkrun_for_slowness_autoruns_safe_runplan(monkeypatch, capsys) -> None:
+    """
+    talkrun should auto-run safe read-only performance diagnostics.
+    """
+    calls = []
+
+    def fake_runplan(request: str) -> None:
+        calls.append(request)
+        print(f"RUNPLAN CALLED: {request}")
+
+    monkeypatch.setattr(cli, "print_runplan_report", fake_runplan)
+
+    cli.print_operator_conversation_run_report("my laptop feels weird and slow")
+
+    output = capsys.readouterr().out
+
+    assert "LIGHTHOUSE TALKRUN" in output
+    assert "Intent: performance_diagnostic" in output
+    assert "Autorun decision:" in output
+    assert "Status: ok" in output
+    assert "Auto-running read-only route through runplan." in output
+    assert "RUNPLAN CALLED: why is my laptop slow" in output
+    assert calls == ["why is my laptop slow"]
+
+
+def test_talkrun_for_chrome_memory_autoruns_safe_runplan(monkeypatch, capsys) -> None:
+    """
+    talkrun should auto-run safe read-only process/memory diagnostics.
+    """
+    calls = []
+
+    def fake_runplan(request: str) -> None:
+        calls.append(request)
+        print(f"RUNPLAN CALLED: {request}")
+
+    monkeypatch.setattr(cli, "print_runplan_report", fake_runplan)
+
+    cli.print_operator_conversation_run_report("why is chrome eating memory")
+
+    output = capsys.readouterr().out
+
+    assert "LIGHTHOUSE TALKRUN" in output
+    assert "Intent: process_memory_diagnostic" in output
+    assert "RUNPLAN CALLED: why is Chrome using memory" in output
+    assert calls == ["why is Chrome using memory"]
+
+
+def test_talkrun_refuses_close_chrome(monkeypatch, capsys) -> None:
+    """
+    talkrun must not auto-run OS-changing requests.
+    """
+    calls = []
+
+    monkeypatch.setattr(cli, "print_runplan_report", lambda request: calls.append(request))
+
+    cli.print_operator_conversation_run_report("close chrome")
+
+    output = capsys.readouterr().out
+
+    assert "LIGHTHOUSE TALKRUN" in output
+    assert "Intent: os_action_request" in output
+    assert "Status: refused" in output
+    assert "Only read-only diagnostic routes may be auto-run" in output
+    assert "No command was executed by talkrun." in output
+    assert calls == []
+
+
+def test_talkrun_refuses_delete_files(monkeypatch, capsys) -> None:
+    """
+    talkrun must not auto-run destructive requests.
+    """
+    calls = []
+
+    monkeypatch.setattr(cli, "print_runplan_report", lambda request: calls.append(request))
+
+    cli.print_operator_conversation_run_report("delete files to make space")
+
+    output = capsys.readouterr().out
+
+    assert "LIGHTHOUSE TALKRUN" in output
+    assert "Intent: destructive_action_request" in output
+    assert "Status: refused" in output
+    assert "No command was executed by talkrun." in output
+    assert calls == []
+
+
+def test_talkrun_refuses_unknown_input(monkeypatch, capsys) -> None:
+    """
+    talkrun must not auto-run unclear requests.
+    """
+    calls = []
+
+    monkeypatch.setattr(cli, "print_runplan_report", lambda request: calls.append(request))
+
+    cli.print_operator_conversation_run_report("banana window purple")
+
+    output = capsys.readouterr().out
+
+    assert "LIGHTHOUSE TALKRUN" in output
+    assert "Status: needs_clarification" in output
+    assert "Autorun decision:" in output
+    assert "Status: refused" in output
+    assert "No command was executed by talkrun." in output
+    assert calls == []
+
+
+def test_run_canonical_command_handles_talkrun(monkeypatch, capsys) -> None:
+    """
+    CLI canonical command routing should support talkrun <text>.
+    """
+    calls = []
+
+    def fake_runplan(request: str) -> None:
+        calls.append(request)
+        print(f"RUNPLAN CALLED: {request}")
+
+    monkeypatch.setattr(cli, "print_runplan_report", fake_runplan)
+
+    result = cli.run_canonical_command("talkrun why is chrome eating memory")
+
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "LIGHTHOUSE TALKRUN" in output
+    assert "Intent: process_memory_diagnostic" in output
+    assert "RUNPLAN CALLED: why is Chrome using memory" in output
+    assert calls == ["why is Chrome using memory"]

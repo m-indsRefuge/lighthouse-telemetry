@@ -528,3 +528,42 @@ def format_operator_response(result: OperatorConversationResult) -> str:
     Format an Operator conversation result for CLI display.
     """
     return build_operator_response(result)
+
+SAFE_AUTORUN_INTENTS = {
+    INTENT_PERFORMANCE_DIAGNOSTIC,
+    INTENT_PROCESS_MEMORY_DIAGNOSTIC,
+    INTENT_GENERAL_HEALTH_CHECK,
+}
+
+
+def is_safe_to_autorun(result: OperatorConversationResult) -> tuple[bool, str]:
+    """
+    Decide whether a conversation result may be auto-run by talkrun.
+
+    This does not execute anything.
+    It only checks whether the route is safe enough for CLI handoff.
+    """
+    if result.status != CONVERSATION_STATUS_OK:
+        return False, "The conversation result is not ok."
+
+    if result.requires_clarification:
+        return False, "The request still needs clarification."
+
+    if not result.requires_engine_run:
+        return False, "The recommended route is not an engine run."
+
+    if not result.recommended_command:
+        return False, "No recommended command was produced."
+
+    if not result.recommended_command.lower().startswith("runplan "):
+        return False, "Only runplan routes may be auto-run."
+
+    if result.intent not in SAFE_AUTORUN_INTENTS:
+        return False, (
+            "Only read-only diagnostic routes may be auto-run. "
+            "Action, destructive, repair, direct-command, and unknown intents "
+            "must be reviewed manually first."
+        )
+
+    return True, "Safe read-only diagnostic route may be auto-run."
+

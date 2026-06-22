@@ -25,6 +25,7 @@ from app.services.insights import build_system_insight, format_insight_report
 from app.services.operator_conversation import (
     format_operator_response,
     interpret_operator_input,
+    is_safe_to_autorun,
 )
 from app.services.lighthouse_engine import (
     LighthouseEngineResult,
@@ -85,6 +86,7 @@ def print_help() -> None:
     print("plan <text> Show a safe Lighthouse tool plan")
     print("runplan <text> Run a request through Lighthouse Engine v1")
     print("talk <text>    Interpret natural input and suggest a safe route")
+    print("talkrun <text> Interpret natural input and auto-run safe read-only routes")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -115,6 +117,9 @@ def print_help() -> None:
     print("- talk my laptop feels slow")
     print("- talk why is chrome eating memory")
     print("- talk close chrome")
+    print("- talkrun my laptop feels slow")
+    print("- talkrun why is chrome eating memory")
+    print("- talkrun close chrome")
     print("- journal")
 
 
@@ -1133,6 +1138,61 @@ def print_operator_conversation_report(user_input: str) -> None:
     print("=" * 52)
 
 
+def print_operator_conversation_run_report(user_input: str) -> None:
+    """
+    Interpret natural Operator input and auto-run only safe read-only routes.
+
+    This does not call the model.
+    This does not mutate the operating system.
+    It only hands off to runplan when the conversation result is explicitly
+    classified as a safe read-only diagnostic route.
+    """
+    cleaned_input = user_input.strip()
+
+    print("\nLIGHTHOUSE TALKRUN")
+    print("=" * 52)
+
+    result = interpret_operator_input(cleaned_input)
+
+    print(format_operator_response(result))
+    print()
+    print("Autorun decision:")
+    print("-" * 52)
+
+    is_allowed, reason = is_safe_to_autorun(result)
+
+    if not is_allowed:
+        print("Status: refused")
+        print(f"Reason: {reason}")
+        print("No command was executed by talkrun.")
+
+        if result.recommended_command:
+            print()
+            print("Manual review route:")
+            print(f"- Use talk first, then review: {result.recommended_command}")
+
+        print("=" * 52)
+        return
+
+    recommended_command = result.recommended_command or ""
+    runplan_request = recommended_command[8:].strip()
+
+    if not runplan_request:
+        print("Status: refused")
+        print("Reason: The runplan request was empty after safety validation.")
+        print("No command was executed by talkrun.")
+        print("=" * 52)
+        return
+
+    print("Status: ok")
+    print(f"Reason: {reason}")
+    print(f"Selected command: {recommended_command}")
+    print("- Auto-running read-only route through runplan.")
+    print("=" * 52)
+
+    print_runplan_report(runplan_request)
+
+
 def print_journal_report(limit: int = 10) -> None:
     """
     Print recent Lighthouse action journal entries.
@@ -1187,6 +1247,15 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("talk "):
         talk_request = cleaned_command[5:].strip()
         print_operator_conversation_report(talk_request)
+        return "handled"
+
+    if normalized_command == "talkrun":
+        print_operator_conversation_run_report("")
+        return "handled"
+
+    if normalized_command.startswith("talkrun "):
+        talkrun_request = cleaned_command[8:].strip()
+        print_operator_conversation_run_report(talkrun_request)
         return "handled"
 
     if normalized_command in {"journal", "action journal", "audit", "audit log"}:
