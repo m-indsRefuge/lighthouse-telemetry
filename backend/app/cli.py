@@ -22,6 +22,10 @@ from app.services.confirmation_gate import (
 from app.services.confirmation_journal import record_target_confirmation_preview
 from app.services.explanation_composer import compose_engine_explanation
 from app.services.insights import build_system_insight, format_insight_report
+from app.services.operator_conversation import (
+    format_operator_response,
+    interpret_operator_input,
+)
 from app.services.lighthouse_engine import (
     LighthouseEngineResult,
     run_lighthouse_engine,
@@ -80,6 +84,7 @@ def print_help() -> None:
     print("explain     Alias for insight")
     print("plan <text> Show a safe Lighthouse tool plan")
     print("runplan <text> Run a request through Lighthouse Engine v1")
+    print("talk <text>    Interpret natural input and suggest a safe route")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -107,6 +112,9 @@ def print_help() -> None:
     print("- runplan please optimize RAM usage")
     print("- runplan delete files to make space")
     print("- runplan close Chrome because it is using memory")
+    print("- talk my laptop feels slow")
+    print("- talk why is chrome eating memory")
+    print("- talk close chrome")
     print("- journal")
 
 
@@ -1096,6 +1104,35 @@ def print_runplan_report(user_request: str) -> None:
     print("=" * 52)
 
 
+def print_operator_conversation_report(user_input: str) -> None:
+    """
+    Interpret natural Operator input and suggest a safe Lighthouse route.
+
+    This does not execute the recommended command.
+    This does not call the model.
+    This does not mutate the operating system.
+    """
+    cleaned_input = user_input.strip()
+
+    print("\nLIGHTHOUSE TALK")
+    print("=" * 52)
+
+    result = interpret_operator_input(cleaned_input)
+
+    print(format_operator_response(result))
+    print()
+    print("Execution:")
+    print("- No command was executed by talk.")
+
+    if result.recommended_command:
+        print("- Review the recommended command before running it.")
+        print(f"- To continue, type: {result.recommended_command}")
+    elif result.clarifying_question:
+        print("- Answer the clarifying question and try talk again.")
+
+    print("=" * 52)
+
+
 def print_journal_report(limit: int = 10) -> None:
     """
     Print recent Lighthouse action journal entries.
@@ -1141,6 +1178,15 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("runplan "):
         runplan_request = cleaned_command[8:].strip()
         print_runplan_report(runplan_request)
+        return "handled"
+
+    if normalized_command == "talk":
+        print_operator_conversation_report("")
+        return "handled"
+
+    if normalized_command.startswith("talk "):
+        talk_request = cleaned_command[5:].strip()
+        print_operator_conversation_report(talk_request)
         return "handled"
 
     if normalized_command in {"journal", "action journal", "audit", "audit log"}:
