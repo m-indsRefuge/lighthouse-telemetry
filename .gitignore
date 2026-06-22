@@ -4,3 +4,7 @@
 logs/
 data/
 .env
+
+# Lighthouse local Operator trace/feedback data
+memory/operator_interactions.jsonl
+memory/operator_feedback.jsonl

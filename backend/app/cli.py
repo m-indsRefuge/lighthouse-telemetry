@@ -22,6 +22,13 @@ from app.services.confirmation_gate import (
 from app.services.confirmation_journal import record_target_confirmation_preview
 from app.services.explanation_composer import compose_engine_explanation
 from app.services.insights import build_system_insight, format_insight_report
+from app.services.operator_interaction_journal import (
+    format_feedback_labels_report,
+    format_operator_feedback_result,
+    format_operator_interactions_report,
+    record_operator_feedback,
+    record_operator_interaction,
+)
 from app.services.operator_routes import (
     build_operator_routes_report,
     validate_route_handoff_for_autorun,
@@ -91,6 +98,9 @@ def print_help() -> None:
     print("talk <text>    Interpret natural input and suggest a safe route")
     print("talkrun <text> Interpret natural input and auto-run safe read-only routes")
     print("routes      Show Operator route registry and policy health")
+    print("interactions Show recent Operator interaction traces")
+    print("feedback labels Show valid Operator feedback labels")
+    print("feedback <trace_id> <label> [note] Save feedback for an interaction")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -125,6 +135,9 @@ def print_help() -> None:
     print("- talkrun why is chrome eating memory")
     print("- talkrun close chrome")
     print("- routes")
+    print("- interactions")
+    print("- feedback labels")
+    print("- feedback optrace-example useful routed correctly")
     print("- journal")
 
 
@@ -1130,6 +1143,21 @@ def print_operator_conversation_report(user_input: str) -> None:
     result = interpret_operator_input(cleaned_input)
 
     print(format_operator_response(result))
+
+    journal_result = record_operator_interaction(
+        mode="talk",
+        result=result,
+        autorun_gate=None,
+        execution={
+            "attempted": False,
+            "executed": False,
+            "refused": False,
+            "engine_request": None,
+        },
+    )
+
+    print_trace_id_from_journal_result(journal_result)
+
     print()
     print("Execution:")
     print("- No command was executed by talk.")
@@ -1169,6 +1197,20 @@ def print_operator_conversation_run_report(user_input: str) -> None:
     recommended_command = handoff.get("recommended_command")
 
     if not gate_result.allowed:
+        journal_result = record_operator_interaction(
+            mode="talkrun",
+            result=result,
+            autorun_gate=gate_result,
+            execution={
+                "attempted": True,
+                "executed": False,
+                "refused": True,
+                "engine_request": None,
+            },
+        )
+
+        print_trace_id_from_journal_result(journal_result)
+
         print("Status: refused")
         print(f"Reason: {gate_result.reason}")
         print("No command was executed by talkrun.")
@@ -1185,6 +1227,20 @@ def print_operator_conversation_run_report(user_input: str) -> None:
 
         print("=" * 52)
         return
+
+    journal_result = record_operator_interaction(
+        mode="talkrun",
+        result=result,
+        autorun_gate=gate_result,
+        execution={
+            "attempted": True,
+            "executed": True,
+            "refused": False,
+            "engine_request": gate_result.engine_request,
+        },
+    )
+
+    print_trace_id_from_journal_result(journal_result)
 
     print("Status: ok")
     print(f"Reason: {gate_result.reason}")
@@ -1203,6 +1259,38 @@ def print_journal_report(limit: int = 10) -> None:
 
     print(format_journal_report(read_result))
 
+
+
+def print_operator_interactions_report(limit: int = 10) -> None:
+    """
+    Print recent Operator interaction traces.
+    """
+    print(format_operator_interactions_report(limit=limit))
+
+
+def print_operator_feedback_labels_report() -> None:
+    """
+    Print allowed Operator feedback labels.
+    """
+    print(format_feedback_labels_report())
+
+
+def print_operator_feedback_report(trace_id: str, label: str, note: str = "") -> None:
+    """
+    Record and print Operator feedback for a trace id.
+    """
+    result = record_operator_feedback(trace_id=trace_id, label=label, note=note)
+    print(format_operator_feedback_result(result))
+
+
+def print_trace_id_from_journal_result(journal_result: dict[str, Any]) -> None:
+    """
+    Print a trace id when a journal write succeeds.
+    """
+    data = journal_result.get("data", {})
+
+    if isinstance(data, dict) and data.get("trace_id"):
+        print(f"Trace ID: {data['trace_id']}")
 
 
 def print_operator_routes_report() -> None:
@@ -1270,6 +1358,35 @@ def run_canonical_command(command: str) -> str:
 
     if normalized_command in {"routes", "route", "operator routes", "route policy"}:
         print_operator_routes_report()
+        return "handled"
+
+    if normalized_command in {"interactions", "interaction", "operator interactions"}:
+        print_operator_interactions_report()
+        return "handled"
+
+    if normalized_command in {"feedback labels", "feedback-labels", "operator feedback labels"}:
+        print_operator_feedback_labels_report()
+        return "handled"
+
+    if normalized_command in {"feedback", "operator feedback"}:
+        print("Usage: feedback <trace_id> <label> [note]")
+        print("Use 'feedback labels' to list valid labels.")
+        return "handled"
+
+    if normalized_command.startswith("feedback "):
+        feedback_text = cleaned_command[len("feedback "):].strip()
+        parts = feedback_text.split(maxsplit=2)
+
+        if len(parts) < 2:
+            print("Usage: feedback <trace_id> <label> [note]")
+            print("Use 'feedback labels' to list valid labels.")
+            return "handled"
+
+        trace_id = parts[0]
+        label = parts[1]
+        note = parts[2] if len(parts) > 2 else ""
+
+        print_operator_feedback_report(trace_id, label, note)
         return "handled"
 
     if normalized_command in {"journal", "action journal", "audit", "audit log"}:
