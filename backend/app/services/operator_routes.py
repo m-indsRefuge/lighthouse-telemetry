@@ -602,3 +602,142 @@ def build_operator_routes_report() -> str:
         lines.append(f"- description: {route.description}")
 
     return "\n".join(lines)
+
+
+
+@dataclass(frozen=True)
+class OperatorAutorunGateResult:
+    """
+    Stable result for the final Operator autorun gate.
+
+    This is the final authority for whether a structured route handoff may
+    be auto-run by talkrun.
+    """
+
+    status: str
+    allowed: bool
+    reason: str
+    engine_request: str | None
+    errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Return a serializable autorun gate result.
+        """
+        return {
+            "status": self.status,
+            "allowed": self.allowed,
+            "reason": self.reason,
+            "engine_request": self.engine_request,
+            "errors": list(self.errors),
+            "warnings": list(self.warnings),
+        }
+
+
+def validate_route_handoff_for_autorun(
+    handoff: dict[str, Any] | None,
+) -> OperatorAutorunGateResult:
+    """
+    Decide whether a structured route handoff may be auto-run.
+
+    This is the final deterministic autorun gate. It does not execute the
+    route. It only validates whether talkrun may hand the request to runplan.
+    """
+    if not isinstance(handoff, dict):
+        return OperatorAutorunGateResult(
+            status="refused",
+            allowed=False,
+            reason="The route handoff envelope was missing or malformed.",
+            engine_request=None,
+            errors=("Route handoff must be a dictionary.",),
+        )
+
+    route_ready = handoff.get("route_ready")
+    route_known = handoff.get("route_known")
+    safety_class = handoff.get("safety_class")
+    command_family = handoff.get("command_family")
+    autorun_allowed = handoff.get("autorun_allowed")
+    manual_review_required = handoff.get("manual_review_required")
+    engine_request = handoff.get("engine_request")
+    refusal_reason = handoff.get("refusal_reason")
+
+    if route_ready is not True:
+        return OperatorAutorunGateResult(
+            status="refused",
+            allowed=False,
+            reason="The route handoff envelope was not ready for autorun.",
+            engine_request=None,
+            errors=("route_ready must be true.",),
+        )
+
+    if route_known is not True:
+        return OperatorAutorunGateResult(
+            status="refused",
+            allowed=False,
+            reason="Unknown or unsupported route handoff cannot be auto-run.",
+            engine_request=None,
+            errors=("route_known must be true.",),
+        )
+
+    if autorun_allowed is not True:
+        return OperatorAutorunGateResult(
+            status="refused",
+            allowed=False,
+            reason=(
+                str(refusal_reason)
+                if refusal_reason
+                else READ_ONLY_AUTORUN_REFUSAL
+            ),
+            engine_request=None,
+            errors=("autorun_allowed must be true.",),
+        )
+
+    if manual_review_required is not False:
+        return OperatorAutorunGateResult(
+            status="refused",
+            allowed=False,
+            reason=(
+                str(refusal_reason)
+                if refusal_reason
+                else READ_ONLY_AUTORUN_REFUSAL
+            ),
+            engine_request=None,
+            errors=("manual_review_required must be false.",),
+        )
+
+    if safety_class != SAFETY_CLASS_READ_ONLY_DIAGNOSTIC:
+        return OperatorAutorunGateResult(
+            status="refused",
+            allowed=False,
+            reason=READ_ONLY_AUTORUN_REFUSAL,
+            engine_request=None,
+            errors=("safety_class must be read_only_diagnostic.",),
+        )
+
+    if command_family != COMMAND_FAMILY_RUNPLAN:
+        return OperatorAutorunGateResult(
+            status="refused",
+            allowed=False,
+            reason="Only runplan handoff envelopes may be auto-run.",
+            engine_request=None,
+            errors=("command_family must be runplan.",),
+        )
+
+    if not isinstance(engine_request, str) or not engine_request.strip():
+        return OperatorAutorunGateResult(
+            status="refused",
+            allowed=False,
+            reason="The route handoff envelope did not include an engine request.",
+            engine_request=None,
+            errors=("engine_request must be a non-empty string.",),
+        )
+
+    return OperatorAutorunGateResult(
+        status="ok",
+        allowed=True,
+        reason="Safe read-only diagnostic route handoff may be auto-run.",
+        engine_request=engine_request.strip(),
+        errors=(),
+        warnings=(),
+    )

@@ -132,7 +132,7 @@ def test_talkrun_for_slowness_autoruns_safe_runplan(monkeypatch, capsys) -> None
     assert "Intent: performance_diagnostic" in output
     assert "Autorun decision:" in output
     assert "Status: ok" in output
-    assert "Auto-running read-only route through structured route handoff." in output
+    assert "Auto-running read-only route through Operator Autorun Gate." in output
     assert "RUNPLAN CALLED: why is my laptop slow" in output
     assert calls == ["why is my laptop slow"]
 
@@ -239,4 +239,5 @@ def test_run_canonical_command_handles_talkrun(monkeypatch, capsys) -> None:
     assert "Intent: process_memory_diagnostic" in output
     assert "RUNPLAN CALLED: why is Chrome using memory" in output
     assert calls == ["why is Chrome using memory"]
+
 

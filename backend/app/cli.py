@@ -23,13 +23,12 @@ from app.services.confirmation_journal import record_target_confirmation_preview
 from app.services.explanation_composer import compose_engine_explanation
 from app.services.insights import build_system_insight, format_insight_report
 from app.services.operator_routes import (
-    COMMAND_FAMILY_RUNPLAN,
     build_operator_routes_report,
+    validate_route_handoff_for_autorun,
 )
 from app.services.operator_conversation import (
     format_operator_response,
     interpret_operator_input,
-    is_safe_to_autorun,
 )
 from app.services.lighthouse_engine import (
     LighthouseEngineResult,
@@ -1165,12 +1164,19 @@ def print_operator_conversation_run_report(user_input: str) -> None:
     print("Autorun decision:")
     print("-" * 52)
 
-    is_allowed, reason = is_safe_to_autorun(result)
+    handoff = result.route_handoff or {}
+    gate_result = validate_route_handoff_for_autorun(handoff)
+    recommended_command = handoff.get("recommended_command")
 
-    if not is_allowed:
+    if not gate_result.allowed:
         print("Status: refused")
-        print(f"Reason: {reason}")
+        print(f"Reason: {gate_result.reason}")
         print("No command was executed by talkrun.")
+
+        if gate_result.errors:
+            print("Gate errors:")
+            for error in gate_result.errors:
+                print(f"- {error}")
 
         if result.recommended_command:
             print()
@@ -1180,38 +1186,13 @@ def print_operator_conversation_run_report(user_input: str) -> None:
         print("=" * 52)
         return
 
-    handoff = result.route_handoff or {}
-    recommended_command = handoff.get("recommended_command")
-    runplan_request = handoff.get("engine_request")
-
-    if not handoff.get("route_ready"):
-        print("Status: refused")
-        print("Reason: The route handoff envelope was not ready.")
-        print("No command was executed by talkrun.")
-        print("=" * 52)
-        return
-
-    if handoff.get("command_family") != COMMAND_FAMILY_RUNPLAN:
-        print("Status: refused")
-        print("Reason: Only runplan handoff envelopes may be auto-run.")
-        print("No command was executed by talkrun.")
-        print("=" * 52)
-        return
-
-    if not isinstance(runplan_request, str) or not runplan_request.strip():
-        print("Status: refused")
-        print("Reason: The route handoff envelope did not include an engine request.")
-        print("No command was executed by talkrun.")
-        print("=" * 52)
-        return
-
     print("Status: ok")
-    print(f"Reason: {reason}")
+    print(f"Reason: {gate_result.reason}")
     print(f"Selected command: {recommended_command}")
-    print("- Auto-running read-only route through structured route handoff.")
+    print("- Auto-running read-only route through Operator Autorun Gate.")
     print("=" * 52)
 
-    print_runplan_report(runplan_request.strip())
+    print_runplan_report(gate_result.engine_request or "")
 
 
 def print_journal_report(limit: int = 10) -> None:

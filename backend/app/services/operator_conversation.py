@@ -20,10 +20,9 @@ from app.services.assistant import classify_user_intent, contains_any, normalize
 from app.services.operator_routes import (
     build_route_handoff,
     build_route_metadata,
-    get_autorun_refusal_reason,
-    get_operator_route,
     is_autorun_allowed_for_intent,
     safety_class_for_intent as route_safety_class_for_intent,
+    validate_route_handoff_for_autorun,
 )
 
 
@@ -694,10 +693,11 @@ SAFE_AUTORUN_INTENTS = {
 
 def is_safe_to_autorun(result: OperatorConversationResult) -> tuple[bool, str]:
     """
-    Decide whether a conversation result may be auto-run by talkrun.
+    Compatibility wrapper for Operator autorun decisions.
 
-    This does not execute anything.
-    It only checks whether the route is safe enough for CLI handoff.
+    The structured route handoff gate is the final authority. This wrapper keeps
+    existing callers stable while preserving the older clarification/status
+    messages at the conversation-result layer.
     """
     if result.status != CONVERSATION_STATUS_OK:
         return False, "The conversation result is not ok."
@@ -705,22 +705,7 @@ def is_safe_to_autorun(result: OperatorConversationResult) -> tuple[bool, str]:
     if result.requires_clarification:
         return False, "The request still needs clarification."
 
-    if not result.requires_engine_run:
-        return False, "The recommended route is not an engine run."
+    gate_result = validate_route_handoff_for_autorun(result.route_handoff or {})
 
-    if not result.recommended_command:
-        return False, "No recommended command was produced."
-
-    if not result.recommended_command.lower().startswith("runplan "):
-        return False, "Only runplan routes may be auto-run."
-
-    route = get_operator_route(result.intent)
-
-    if route is None:
-        return False, "Unknown or unsupported intents cannot be auto-run."
-
-    if not route.autorun_allowed:
-        return False, get_autorun_refusal_reason(result.intent)
-
-    return True, "Safe read-only diagnostic route may be auto-run."
+    return gate_result.allowed, gate_result.reason
 
