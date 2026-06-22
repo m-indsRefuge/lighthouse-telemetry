@@ -22,6 +22,7 @@ from app.services.confirmation_gate import (
 from app.services.confirmation_journal import record_target_confirmation_preview
 from app.services.explanation_composer import compose_engine_explanation
 from app.services.insights import build_system_insight, format_insight_report
+from app.services.operator_routes import build_operator_routes_report
 from app.services.operator_conversation import (
     format_operator_response,
     interpret_operator_input,
@@ -87,6 +88,7 @@ def print_help() -> None:
     print("runplan <text> Run a request through Lighthouse Engine v1")
     print("talk <text>    Interpret natural input and suggest a safe route")
     print("talkrun <text> Interpret natural input and auto-run safe read-only routes")
+    print("routes      Show Operator route registry and policy health")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -120,6 +122,7 @@ def print_help() -> None:
     print("- talkrun my laptop feels slow")
     print("- talkrun why is chrome eating memory")
     print("- talkrun close chrome")
+    print("- routes")
     print("- journal")
 
 
@@ -1202,6 +1205,14 @@ def print_journal_report(limit: int = 10) -> None:
     print(format_journal_report(read_result))
 
 
+
+def print_operator_routes_report() -> None:
+    """
+    Print the Operator route registry and policy validation report.
+    """
+    print(build_operator_routes_report())
+
+
 def run_canonical_command(command: str) -> str:
     """
     Run a known Lighthouse command.
@@ -1256,6 +1267,10 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("talkrun "):
         talkrun_request = cleaned_command[8:].strip()
         print_operator_conversation_run_report(talkrun_request)
+        return "handled"
+
+    if normalized_command in {"routes", "route", "operator routes", "route policy"}:
+        print_operator_routes_report()
         return "handled"
 
     if normalized_command in {"journal", "action journal", "audit", "audit log"}:

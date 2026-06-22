@@ -274,3 +274,199 @@ def build_route_metadata(intent: str) -> dict[str, Any]:
     metadata = route.to_dict()
     metadata["route_known"] = True
     return metadata
+
+
+REQUIRED_OPERATOR_INTENTS = frozenset(
+    {
+        INTENT_PERFORMANCE_DIAGNOSTIC,
+        INTENT_PROCESS_MEMORY_DIAGNOSTIC,
+        INTENT_GENERAL_HEALTH_CHECK,
+        INTENT_OS_ACTION_REQUEST,
+        INTENT_DESTRUCTIVE_ACTION_REQUEST,
+        INTENT_REPAIR_REQUEST,
+        INTENT_DIRECT_COMMAND,
+        INTENT_UNKNOWN,
+    }
+)
+
+VALID_SAFETY_CLASSES = frozenset(
+    {
+        SAFETY_CLASS_READ_ONLY_DIAGNOSTIC,
+        SAFETY_CLASS_OS_CHANGING,
+        SAFETY_CLASS_DESTRUCTIVE,
+        SAFETY_CLASS_INSPECT_FIRST_REPAIR,
+        SAFETY_CLASS_DIRECT_CLI_COMMAND,
+        SAFETY_CLASS_NEEDS_CLARIFICATION,
+    }
+)
+
+VALID_COMMAND_FAMILIES = frozenset(
+    {
+        COMMAND_FAMILY_RUNPLAN,
+        COMMAND_FAMILY_RUNPLAN_PREVIEW_ONLY,
+        COMMAND_FAMILY_DIRECT_CLI,
+        COMMAND_FAMILY_NONE,
+    }
+)
+
+
+def validate_operator_route_registry() -> dict[str, Any]:
+    """
+    Validate the Operator route registry for internal consistency.
+
+    This is a deterministic policy integrity check.
+    It does not execute routes.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    registered_intents = set(OPERATOR_ROUTE_REGISTRY)
+    missing_intents = sorted(REQUIRED_OPERATOR_INTENTS - registered_intents)
+    unexpected_intents = sorted(registered_intents - REQUIRED_OPERATOR_INTENTS)
+
+    for intent in missing_intents:
+        errors.append(f"Missing required Operator route: {intent}")
+
+    for intent in unexpected_intents:
+        warnings.append(f"Unexpected Operator route is registered: {intent}")
+
+    for registry_key, route in OPERATOR_ROUTE_REGISTRY.items():
+        if registry_key != route.intent:
+            errors.append(
+                "Registry key does not match route intent: "
+                f"{registry_key} != {route.intent}"
+            )
+
+        if not route.intent:
+            errors.append(f"Route has empty intent: {registry_key}")
+
+        if route.safety_class not in VALID_SAFETY_CLASSES:
+            errors.append(
+                f"Route {registry_key} has invalid safety_class: "
+                f"{route.safety_class}"
+            )
+
+        if route.command_family not in VALID_COMMAND_FAMILIES:
+            errors.append(
+                f"Route {registry_key} has invalid command_family: "
+                f"{route.command_family}"
+            )
+
+        if not route.description:
+            warnings.append(f"Route {registry_key} has no description.")
+
+        if not route.refusal_reason:
+            warnings.append(f"Route {registry_key} has no refusal reason.")
+
+        if route.autorun_allowed:
+            if route.safety_class != SAFETY_CLASS_READ_ONLY_DIAGNOSTIC:
+                errors.append(
+                    f"Route {registry_key} allows autorun but is not read-only."
+                )
+
+            if route.command_family != COMMAND_FAMILY_RUNPLAN:
+                errors.append(
+                    f"Route {registry_key} allows autorun but is not a runplan route."
+                )
+
+            if not route.requires_engine_run:
+                errors.append(
+                    f"Route {registry_key} allows autorun but does not require engine run."
+                )
+
+            if route.manual_review_required:
+                errors.append(
+                    f"Route {registry_key} allows autorun but also requires manual review."
+                )
+
+        if (
+            route.safety_class != SAFETY_CLASS_READ_ONLY_DIAGNOSTIC
+            and route.autorun_allowed
+        ):
+            errors.append(
+                f"Route {registry_key} is non-read-only but allows autorun."
+            )
+
+    unknown_route = OPERATOR_ROUTE_REGISTRY.get(INTENT_UNKNOWN)
+
+    if unknown_route is None:
+        errors.append("Unknown route contract is missing.")
+    else:
+        if unknown_route.autorun_allowed:
+            errors.append("Unknown route must not allow autorun.")
+
+        if not unknown_route.manual_review_required:
+            errors.append("Unknown route must require manual review.")
+
+        if unknown_route.requires_engine_run:
+            errors.append("Unknown route must not require engine run.")
+
+    direct_route = OPERATOR_ROUTE_REGISTRY.get(INTENT_DIRECT_COMMAND)
+
+    if direct_route is None:
+        errors.append("Direct command route contract is missing.")
+    else:
+        if direct_route.requires_engine_run:
+            errors.append("Direct command route must not require engine run.")
+
+        if direct_route.autorun_allowed:
+            errors.append("Direct command route must not allow autorun.")
+
+    status = "ok" if not errors else "invalid"
+
+    return {
+        "status": status,
+        "message": (
+            "Operator route registry is valid."
+            if status == "ok"
+            else "Operator route registry failed validation."
+        ),
+        "route_count": len(OPERATOR_ROUTE_REGISTRY),
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def build_operator_routes_report() -> str:
+    """
+    Build a plain-text report of Operator route policy.
+    """
+    validation = validate_operator_route_registry()
+
+    lines = [
+        "LIGHTHOUSE OPERATOR ROUTES",
+        "-" * 52,
+        f"Status: {validation['status']}",
+        f"Message: {validation['message']}",
+        f"Registered routes: {validation['route_count']}",
+    ]
+
+    if validation["errors"]:
+        lines.append("Errors:")
+        lines.extend(f"- {error}" for error in validation["errors"])
+
+    if validation["warnings"]:
+        lines.append("Warnings:")
+        lines.extend(f"- {warning}" for warning in validation["warnings"])
+
+    lines.append("")
+    lines.append("Routes:")
+
+    for route in iter_operator_routes():
+        lines.append("")
+        lines.append(route.intent)
+        lines.append(f"- safety_class: {route.safety_class}")
+        lines.append(f"- command_family: {route.command_family}")
+        lines.append(
+            f"- requires_engine_run: {'yes' if route.requires_engine_run else 'no'}"
+        )
+        lines.append(
+            f"- autorun_allowed: {'yes' if route.autorun_allowed else 'no'}"
+        )
+        lines.append(
+            f"- manual_review_required: "
+            f"{'yes' if route.manual_review_required else 'no'}"
+        )
+        lines.append(f"- description: {route.description}")
+
+    return "\n".join(lines)
