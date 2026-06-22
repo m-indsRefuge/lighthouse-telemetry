@@ -11,7 +11,9 @@ It does not mutate the operating system.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
+import re
 import subprocess
 from typing import Any, Callable
 
@@ -33,6 +35,7 @@ PowerShellRunner = Callable[[str], str]
 
 CIM_SOURCE = "cim"
 DEFAULT_CIM_TIMEOUT_SECONDS = 45
+CIM_JSON_DATE_PATTERN = re.compile(r"^/Date\((-?\d+)(?:[+-]\d+)?\)/$")
 
 APPROVED_CIM_CLASS_PROPERTIES: dict[str, list[str]] = {
     "Win32_OperatingSystem": [
@@ -233,6 +236,33 @@ def parse_cim_json(output: str) -> list[dict[str, Any]]:
     return []
 
 
+def normalize_cim_json_date(value: str) -> str:
+    """
+    Convert PowerShell/CIM JSON /Date(milliseconds)/ values into ISO UTC.
+
+    Non-matching strings are returned unchanged.
+    """
+    match = CIM_JSON_DATE_PATTERN.match(value.strip())
+
+    if not match:
+        return value
+
+    milliseconds = int(match.group(1))
+    timestamp = milliseconds / 1000
+
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+
+
+def normalize_cim_value(value: Any) -> Any:
+    """
+    Normalize CIM values before they become evidence values.
+    """
+    if isinstance(value, str):
+        return normalize_cim_json_date(value)
+
+    return value
+
+
 def signal_for_property(class_name: str, property_name: str) -> tuple[str, str]:
     """
     Return the normalized signal name and plain meaning for a CIM property.
@@ -262,7 +292,8 @@ def evidence_items_from_cim_record(
             continue
 
         signal, plain_meaning = signal_for_property(class_name, property_name)
-        value = record.get(property_name)
+        raw_value = record.get(property_name)
+        value = normalize_cim_value(raw_value)
         privacy = PRIVACY_MEDIUM if class_name in {"Win32_ComputerSystem"} else PRIVACY_LOW
         confidence = CONFIDENCE_MEDIUM if value in {None, ""} else CONFIDENCE_HIGH
 
@@ -282,6 +313,7 @@ def evidence_items_from_cim_record(
                 raw={
                     "class_name": class_name,
                     "property": property_name,
+                    "raw_value": raw_value,
                 },
             )
         )
