@@ -32,6 +32,7 @@ from app.services.windows_evidence import (
 PowerShellRunner = Callable[[str], str]
 
 CIM_SOURCE = "cim"
+DEFAULT_CIM_TIMEOUT_SECONDS = 45
 
 APPROVED_CIM_CLASS_PROPERTIES: dict[str, list[str]] = {
     "Win32_OperatingSystem": [
@@ -186,7 +187,10 @@ def build_cim_script(class_name: str, properties: list[str]) -> str:
     )
 
 
-def run_powershell_script(script: str, timeout_seconds: int = 20) -> str:
+def run_powershell_script(
+    script: str,
+    timeout_seconds: int = DEFAULT_CIM_TIMEOUT_SECONDS,
+) -> str:
     """
     Run a read-only PowerShell script and return stdout.
     """
@@ -285,6 +289,25 @@ def evidence_items_from_cim_record(
     return items
 
 
+def format_cim_collection_error(class_name: str, error: BaseException) -> str:
+    """
+    Format CIM collection errors for Operator-facing reports.
+    """
+    if isinstance(error, subprocess.TimeoutExpired):
+        timeout = error.timeout if error.timeout is not None else "unknown"
+        return f"CIM query timed out for {class_name} after {timeout} seconds."
+
+    if isinstance(error, json.JSONDecodeError):
+        return f"CIM query returned invalid JSON for {class_name}: {error}"
+
+    message = str(error).strip()
+
+    if message:
+        return message
+
+    return f"CIM query failed for {class_name}."
+
+
 def collect_cim_class_evidence(
     *,
     class_name: str,
@@ -328,6 +351,7 @@ def collect_cim_class_evidence(
             "warnings": [],
         }
     except (RuntimeError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+        error_message = format_cim_collection_error(class_name, error)
         error_item = build_windows_evidence_item(
             source=CIM_SOURCE,
             collector=class_name,
@@ -340,7 +364,7 @@ def collect_cim_class_evidence(
             privacy=PRIVACY_LOW,
             permission_required=False,
             plain_meaning=f"Lighthouse could not collect {class_name} CIM evidence.",
-            errors=[str(error)],
+            errors=[error_message],
             raw={"class_name": class_name},
         )
 
@@ -349,7 +373,7 @@ def collect_cim_class_evidence(
             "class_name": class_name,
             "record_count": 0,
             "evidence_items": [error_item],
-            "errors": [str(error)],
+            "errors": [error_message],
             "warnings": [],
         }
 

@@ -4,6 +4,7 @@ Tests for Windows CIM collector.
 
 from pathlib import Path
 import json
+import subprocess
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -182,3 +183,22 @@ def test_collect_windows_cim_evidence_handles_partial_errors() -> None:
         for item in result["evidence_items"]
     )
     assert result["summary"]["data"]["total_items"] > 0
+
+def test_collect_cim_class_evidence_formats_timeout_error() -> None:
+    def timeout_runner(script: str) -> str:
+        raise subprocess.TimeoutExpired(cmd="Get-CimInstance", timeout=45)
+
+    result = collect_cim_class_evidence(
+        class_name="Win32_OperatingSystem",
+        runner=timeout_runner,
+    )
+
+    assert result["status"] == "error"
+    assert result["errors"] == [
+        "CIM query timed out for Win32_OperatingSystem after 45 seconds."
+    ]
+    assert result["evidence_items"][0]["signal"] == "cim_collection_error"
+    assert result["evidence_items"][0]["errors"] == [
+        "CIM query timed out for Win32_OperatingSystem after 45 seconds."
+    ]
+
