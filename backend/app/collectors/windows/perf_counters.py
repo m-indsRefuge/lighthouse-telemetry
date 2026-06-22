@@ -162,7 +162,7 @@ def normalize_counter_path(counter_path: str) -> str:
     """
     Normalize a counter path so local machine prefixes do not affect matching.
     """
-    normalized = str(counter_path).strip().replace("/", "\\")
+    normalized = str(counter_path).strip()
 
     if normalized.startswith("\\\\"):
         without_prefix = normalized[2:]

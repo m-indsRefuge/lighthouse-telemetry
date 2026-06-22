@@ -92,6 +92,20 @@ def test_normalize_counter_path_removes_machine_prefix() -> None:
     )
 
 
+
+
+def test_normalize_counter_path_preserves_forward_slashes_inside_counter_names() -> None:
+    assert normalize_counter_path(r"\memory\pages/sec") == r"\memory\pages/sec"
+    assert (
+        normalize_counter_path(r"\physicaldisk(_total)\avg. disk sec/read")
+        == r"\physicaldisk(_total)\avg. disk sec/read"
+    )
+    assert (
+        normalize_counter_path(r"\physicaldisk(_total)\disk reads/sec")
+        == r"\physicaldisk(_total)\disk reads/sec"
+    )
+
+
 def test_collect_windows_performance_counters_rejects_unapproved_counter() -> None:
     result = collect_windows_performance_counters(
         counter_paths=(r"\process(*)\id process",),
