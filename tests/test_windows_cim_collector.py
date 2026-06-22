@@ -169,7 +169,7 @@ def test_collect_cim_class_evidence_returns_normalized_items() -> None:
         for item in result["evidence_items"]
         if item["signal"] == "last_boot_time"
     ]
-    assert last_boot_items[0]["value"] == "2026-06-20T08:17:53.961000+00:00"
+    assert last_boot_items[0]["value"] == "2026-06-20T09:37:53.961000+00:00"
     assert last_boot_items[0]["raw"]["raw_value"] == "/Date(1781948273961)/"
 
 
