@@ -8,6 +8,7 @@ read-only assistant that can respond to user commands.
 from typing import Any
 
 from app.collectors.event_logs import get_recent_system_events
+from app.collectors.windows.cim import collect_windows_cim_evidence
 from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
 from app.services.action_journal import (
@@ -22,6 +23,7 @@ from app.services.confirmation_gate import (
 from app.services.confirmation_journal import record_target_confirmation_preview
 from app.services.explanation_composer import compose_engine_explanation
 from app.services.insights import build_system_insight, format_insight_report
+from app.services.windows_evidence_report import format_windows_evidence_report
 from app.services.operator_interaction_journal import (
     format_feedback_labels_report,
     format_operator_feedback_result,
@@ -111,6 +113,7 @@ def print_help() -> None:
     print("model       Show local Ollama model status")
     print("model test  Send a tiny safe test prompt to the local Ollama model")
     print("events      Show recent crash-relevant Windows events")
+    print("windows     Show Windows-native CIM evidence")
     print("crash       Alias for events")
     print("save        Save a timestamped local JSON snapshot")
     print("history     List saved local snapshots")
@@ -144,6 +147,7 @@ def print_help() -> None:
     print("- feedback labels")
     print("- feedback optrace-example useful routed correctly")
     print("- dataset operator")
+    print("- windows")
     print("- journal")
 
 
@@ -376,6 +380,14 @@ def print_diagnosis(telemetry: dict[str, Any]) -> None:
         print("- No immediate action needed.")
 
     print("=" * 52)
+
+
+def print_windows_evidence_report() -> None:
+    """
+    Collect and print Windows-native CIM evidence.
+    """
+    result = collect_windows_cim_evidence()
+    print(format_windows_evidence_report(result))
 
 
 def print_events_report(limit: int = 100) -> None:
@@ -1465,6 +1477,10 @@ def run_canonical_command(command: str) -> str:
 
     if normalized_command in {"model", "models", "llm", "ollama"}:
         print_model_report()
+        return "handled"
+
+    if normalized_command in {"windows", "windows evidence", "cim", "cim evidence"}:
+        print_windows_evidence_report()
         return "handled"
 
     if normalized_command in {"events", "event", "crash", "crashes"}:
