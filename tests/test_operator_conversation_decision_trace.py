@@ -100,3 +100,37 @@ def test_decision_trace_includes_route_contract_metadata() -> None:
     assert route_contract["intent"] == INTENT_OS_ACTION_REQUEST
     assert route_contract["safety_class"] == "os_changing"
     assert route_contract["autorun_allowed"] is False
+
+def test_conversation_result_includes_authoritative_route_handoff() -> None:
+    result = interpret_operator_input("why is chrome eating memory")
+    payload = result.to_dict()
+    handoff = payload["route_handoff"]
+
+    assert handoff["route_ready"] is True
+    assert handoff["command_family"] == "runplan"
+    assert handoff["engine_request"] == "why is Chrome using memory"
+    assert handoff["autorun_allowed"] is True
+    assert handoff["manual_review_required"] is False
+
+
+def test_unsafe_conversation_result_handoff_requires_manual_review() -> None:
+    result = interpret_operator_input("close chrome")
+    payload = result.to_dict()
+    handoff = payload["route_handoff"]
+
+    assert handoff["route_ready"] is True
+    assert handoff["command_family"] == "runplan_preview_only"
+    assert handoff["engine_request"] == "close Chrome because it may be using resources"
+    assert handoff["autorun_allowed"] is False
+    assert handoff["manual_review_required"] is True
+
+
+def test_unknown_conversation_result_handoff_is_not_ready() -> None:
+    result = interpret_operator_input("banana window purple")
+    payload = result.to_dict()
+    handoff = payload["route_handoff"]
+
+    assert handoff["route_ready"] is False
+    assert handoff["command_family"] == "none"
+    assert handoff["engine_request"] is None
+    assert handoff["autorun_allowed"] is False

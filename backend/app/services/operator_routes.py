@@ -81,6 +81,47 @@ class OperatorRouteContract:
         }
 
 
+@dataclass(frozen=True)
+class OperatorRouteHandoff:
+    """
+    Structured handoff envelope from Operator conversation routing to CLI/engine.
+
+    This object is the executable route contract.
+    Display strings such as "runplan ..." are retained for the Operator, but
+    they are not the source of authority for talkrun.
+    """
+
+    route_ready: bool
+    route_known: bool
+    intent: str
+    safety_class: str
+    command_family: str
+    recommended_command: str | None
+    engine_request: str | None
+    autorun_allowed: bool
+    manual_review_required: bool
+    refusal_reason: str
+    errors: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Return a serializable handoff envelope.
+        """
+        return {
+            "route_ready": self.route_ready,
+            "route_known": self.route_known,
+            "intent": self.intent,
+            "safety_class": self.safety_class,
+            "command_family": self.command_family,
+            "recommended_command": self.recommended_command,
+            "engine_request": self.engine_request,
+            "autorun_allowed": self.autorun_allowed,
+            "manual_review_required": self.manual_review_required,
+            "refusal_reason": self.refusal_reason,
+            "errors": list(self.errors),
+        }
+
+
 OPERATOR_ROUTE_REGISTRY: dict[str, OperatorRouteContract] = {
     INTENT_PERFORMANCE_DIAGNOSTIC: OperatorRouteContract(
         intent=INTENT_PERFORMANCE_DIAGNOSTIC,
@@ -251,6 +292,97 @@ def get_autorun_refusal_reason(intent: str) -> str:
         return "Unknown or unsupported intents cannot be auto-run."
 
     return route.refusal_reason
+
+
+def build_route_handoff(
+    *,
+    intent: str,
+    recommended_command: str | None,
+    interpreted_request: str | None,
+) -> OperatorRouteHandoff:
+    """
+    Build a structured handoff envelope for an Operator route.
+
+    The engine_request is derived from the interpreted request, not by slicing
+    the display command. This keeps the handoff deterministic and auditable.
+    """
+    route = get_operator_route(intent)
+    errors: list[str] = []
+
+    if route is None:
+        return OperatorRouteHandoff(
+            route_ready=False,
+            route_known=False,
+            intent=intent,
+            safety_class=SAFETY_CLASS_NEEDS_CLARIFICATION,
+            command_family=COMMAND_FAMILY_NONE,
+            recommended_command=recommended_command,
+            engine_request=None,
+            autorun_allowed=False,
+            manual_review_required=True,
+            refusal_reason="Unknown or unsupported intents cannot be handed off.",
+            errors=("Unknown or unsupported Operator intent.",),
+        )
+
+    cleaned_recommended_command = (
+        recommended_command.strip()
+        if isinstance(recommended_command, str) and recommended_command.strip()
+        else None
+    )
+    cleaned_interpreted_request = (
+        interpreted_request.strip()
+        if isinstance(interpreted_request, str) and interpreted_request.strip()
+        else None
+    )
+
+    engine_request: str | None = None
+
+    if route.command_family in {
+        COMMAND_FAMILY_RUNPLAN,
+        COMMAND_FAMILY_RUNPLAN_PREVIEW_ONLY,
+    }:
+        engine_request = cleaned_interpreted_request
+
+        if not engine_request:
+            errors.append("Runplan route has no interpreted engine request.")
+
+        if not cleaned_recommended_command:
+            errors.append("Runplan route has no recommended command.")
+        elif not cleaned_recommended_command.lower().startswith("runplan "):
+            errors.append("Runplan route recommended command must start with 'runplan '.")
+
+    elif route.command_family == COMMAND_FAMILY_DIRECT_CLI:
+        if not cleaned_recommended_command:
+            errors.append("Direct CLI route has no recommended command.")
+
+    elif route.command_family == COMMAND_FAMILY_NONE:
+        if cleaned_recommended_command or cleaned_interpreted_request:
+            errors.append("No-route handoff should not contain an executable request.")
+
+    else:
+        errors.append(f"Unsupported command family: {route.command_family}")
+
+    route_ready = not errors and (
+        route.command_family in {
+            COMMAND_FAMILY_RUNPLAN,
+            COMMAND_FAMILY_RUNPLAN_PREVIEW_ONLY,
+            COMMAND_FAMILY_DIRECT_CLI,
+        }
+    )
+
+    return OperatorRouteHandoff(
+        route_ready=route_ready,
+        route_known=True,
+        intent=route.intent,
+        safety_class=route.safety_class,
+        command_family=route.command_family,
+        recommended_command=cleaned_recommended_command,
+        engine_request=engine_request,
+        autorun_allowed=route.autorun_allowed,
+        manual_review_required=route.manual_review_required,
+        refusal_reason=route.refusal_reason,
+        errors=tuple(errors),
+    )
 
 
 def build_route_metadata(intent: str) -> dict[str, Any]:

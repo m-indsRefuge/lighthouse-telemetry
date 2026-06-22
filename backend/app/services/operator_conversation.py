@@ -18,6 +18,7 @@ from typing import Any
 
 from app.services.assistant import classify_user_intent, contains_any, normalize_text
 from app.services.operator_routes import (
+    build_route_handoff,
     build_route_metadata,
     get_autorun_refusal_reason,
     get_operator_route,
@@ -142,6 +143,7 @@ class OperatorConversationResult:
     safety_note: str
     confidence: float
     decision_trace: dict[str, Any] | None = None
+    route_handoff: dict[str, Any] | None = None
     warnings: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
@@ -163,6 +165,7 @@ class OperatorConversationResult:
             "safety_note": self.safety_note,
             "confidence": self.confidence,
             "decision_trace": self.decision_trace or {},
+            "route_handoff": self.route_handoff or {},
             "warnings": list(self.warnings),
             "errors": list(self.errors),
         }
@@ -183,6 +186,7 @@ def build_result(
     safety_note: str,
     confidence: float,
     decision_trace: dict[str, Any] | None = None,
+    route_handoff: dict[str, Any] | None = None,
     warnings: tuple[str, ...] = (),
     errors: tuple[str, ...] = (),
 ) -> OperatorConversationResult:
@@ -210,6 +214,12 @@ def build_result(
             requires_clarification=requires_clarification,
             warnings=warnings,
         ),
+        route_handoff=route_handoff
+        or build_route_handoff(
+            intent=intent,
+            recommended_command=recommended_command,
+            interpreted_request=interpreted_request,
+        ).to_dict(),
         warnings=warnings,
         errors=errors,
     )
@@ -314,6 +324,11 @@ def build_decision_trace(
         "command_family": route_metadata["command_family"],
         "manual_review_required": route_metadata["manual_review_required"],
         "route_contract": route_metadata,
+        "route_handoff": build_route_handoff(
+            intent=intent,
+            recommended_command=recommended_command,
+            interpreted_request=None,
+        ).to_dict(),
         "matched_signal_groups": matched_signal_groups,
         "matched_signals": matched_signals,
         "warnings": list(warnings),
@@ -635,6 +650,26 @@ def build_operator_response(result: OperatorConversationResult) -> str:
                 if matches:
                     joined_matches = ", ".join(str(match) for match in matches)
                     lines.append(f"  - {group_name}: {joined_matches}")
+
+    handoff = result.route_handoff or {}
+
+    if handoff:
+        lines.append("Route handoff:")
+
+        for key in (
+            "route_ready",
+            "command_family",
+            "engine_request",
+            "autorun_allowed",
+            "manual_review_required",
+        ):
+            value = handoff.get(key)
+
+            if isinstance(value, bool):
+                value = "yes" if value else "no"
+
+            if value is not None:
+                lines.append(f"- {key}: {value}")
 
     if result.warnings:
         lines.append("Warnings:")
