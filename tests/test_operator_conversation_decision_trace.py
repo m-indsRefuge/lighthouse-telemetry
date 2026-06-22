@@ -86,3 +86,17 @@ def test_operator_response_prints_decision_trace() -> None:
     assert "- safety_class: os_changing" in output
     assert "- autorun_eligible: no" in output
     assert "- matched_signal_groups:" in output
+
+def test_decision_trace_includes_route_contract_metadata() -> None:
+    result = interpret_operator_input("close chrome")
+    trace = result.decision_trace or {}
+
+    assert trace["route_known"] is True
+    assert trace["command_family"] == "runplan_preview_only"
+    assert trace["manual_review_required"] is True
+
+    route_contract = trace["route_contract"]
+
+    assert route_contract["intent"] == INTENT_OS_ACTION_REQUEST
+    assert route_contract["safety_class"] == "os_changing"
+    assert route_contract["autorun_allowed"] is False

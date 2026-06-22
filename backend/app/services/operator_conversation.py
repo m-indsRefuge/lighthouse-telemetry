@@ -17,6 +17,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services.assistant import classify_user_intent, contains_any, normalize_text
+from app.services.operator_routes import (
+    build_route_metadata,
+    get_autorun_refusal_reason,
+    get_operator_route,
+    is_autorun_allowed_for_intent,
+    safety_class_for_intent as route_safety_class_for_intent,
+)
 
 
 CONVERSATION_STATUS_OK = "ok"
@@ -250,28 +257,9 @@ def matched_phrases(text: str, phrases: list[str]) -> list[str]:
 
 def safety_class_for_intent(intent: str) -> str:
     """
-    Classify the safety posture of an interpreted Operator intent.
+    Return the registry-backed safety posture of an interpreted Operator intent.
     """
-    if intent in {
-        INTENT_PERFORMANCE_DIAGNOSTIC,
-        INTENT_PROCESS_MEMORY_DIAGNOSTIC,
-        INTENT_GENERAL_HEALTH_CHECK,
-    }:
-        return "read_only_diagnostic"
-
-    if intent == INTENT_OS_ACTION_REQUEST:
-        return "os_changing"
-
-    if intent == INTENT_DESTRUCTIVE_ACTION_REQUEST:
-        return "destructive_or_data_changing"
-
-    if intent == INTENT_REPAIR_REQUEST:
-        return "inspect_first_repair_request"
-
-    if intent == INTENT_DIRECT_COMMAND:
-        return "direct_cli_command"
-
-    return "needs_clarification"
+    return route_safety_class_for_intent(intent)
 
 
 def build_decision_trace(
@@ -311,20 +299,21 @@ def build_decision_trace(
         for match in matches:
             matched_signals.append(f"{group_name}:{match}")
 
-    autorun_eligible = intent in {
-        INTENT_PERFORMANCE_DIAGNOSTIC,
-        INTENT_PROCESS_MEMORY_DIAGNOSTIC,
-        INTENT_GENERAL_HEALTH_CHECK,
-    }
+    route_metadata = build_route_metadata(intent)
+    autorun_eligible = is_autorun_allowed_for_intent(intent)
 
     return {
         "normalized_input": normalized_input,
         "selected_intent": intent,
-        "safety_class": safety_class_for_intent(intent),
+        "safety_class": route_metadata["safety_class"],
         "recommended_command": recommended_command,
         "requires_engine_run": requires_engine_run,
         "requires_clarification": requires_clarification,
         "autorun_eligible": autorun_eligible,
+        "route_known": route_metadata["route_known"],
+        "command_family": route_metadata["command_family"],
+        "manual_review_required": route_metadata["manual_review_required"],
+        "route_contract": route_metadata,
         "matched_signal_groups": matched_signal_groups,
         "matched_signals": matched_signals,
         "warnings": list(warnings),
@@ -667,6 +656,7 @@ SAFE_AUTORUN_INTENTS = {
 }
 
 
+
 def is_safe_to_autorun(result: OperatorConversationResult) -> tuple[bool, str]:
     """
     Decide whether a conversation result may be auto-run by talkrun.
@@ -689,12 +679,13 @@ def is_safe_to_autorun(result: OperatorConversationResult) -> tuple[bool, str]:
     if not result.recommended_command.lower().startswith("runplan "):
         return False, "Only runplan routes may be auto-run."
 
-    if result.intent not in SAFE_AUTORUN_INTENTS:
-        return False, (
-            "Only read-only diagnostic routes may be auto-run. "
-            "Action, destructive, repair, direct-command, and unknown intents "
-            "must be reviewed manually first."
-        )
+    route = get_operator_route(result.intent)
+
+    if route is None:
+        return False, "Unknown or unsupported intents cannot be auto-run."
+
+    if not route.autorun_allowed:
+        return False, get_autorun_refusal_reason(result.intent)
 
     return True, "Safe read-only diagnostic route may be auto-run."
 
