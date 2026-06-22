@@ -134,6 +134,7 @@ class OperatorConversationResult:
     clarifying_question: str | None
     safety_note: str
     confidence: float
+    decision_trace: dict[str, Any] | None = None
     warnings: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
 
@@ -154,6 +155,7 @@ class OperatorConversationResult:
             "clarifying_question": self.clarifying_question,
             "safety_note": self.safety_note,
             "confidence": self.confidence,
+            "decision_trace": self.decision_trace or {},
             "warnings": list(self.warnings),
             "errors": list(self.errors),
         }
@@ -173,6 +175,7 @@ def build_result(
     clarifying_question: str | None,
     safety_note: str,
     confidence: float,
+    decision_trace: dict[str, Any] | None = None,
     warnings: tuple[str, ...] = (),
     errors: tuple[str, ...] = (),
 ) -> OperatorConversationResult:
@@ -192,6 +195,14 @@ def build_result(
         clarifying_question=clarifying_question,
         safety_note=safety_note,
         confidence=confidence,
+        decision_trace=decision_trace or build_decision_trace(
+            normalized_input=normalized_input,
+            intent=intent,
+            recommended_command=recommended_command,
+            requires_engine_run=requires_engine_run,
+            requires_clarification=requires_clarification,
+            warnings=warnings,
+        ),
         warnings=warnings,
         errors=errors,
     )
@@ -228,6 +239,96 @@ def infer_process_target(text: str) -> str | None:
         return "the browser"
 
     return None
+
+
+def matched_phrases(text: str, phrases: list[str]) -> list[str]:
+    """
+    Return the phrases that matched the normalized Operator input.
+    """
+    return [phrase for phrase in phrases if contains_any(text, [phrase])]
+
+
+def safety_class_for_intent(intent: str) -> str:
+    """
+    Classify the safety posture of an interpreted Operator intent.
+    """
+    if intent in {
+        INTENT_PERFORMANCE_DIAGNOSTIC,
+        INTENT_PROCESS_MEMORY_DIAGNOSTIC,
+        INTENT_GENERAL_HEALTH_CHECK,
+    }:
+        return "read_only_diagnostic"
+
+    if intent == INTENT_OS_ACTION_REQUEST:
+        return "os_changing"
+
+    if intent == INTENT_DESTRUCTIVE_ACTION_REQUEST:
+        return "destructive_or_data_changing"
+
+    if intent == INTENT_REPAIR_REQUEST:
+        return "inspect_first_repair_request"
+
+    if intent == INTENT_DIRECT_COMMAND:
+        return "direct_cli_command"
+
+    return "needs_clarification"
+
+
+def build_decision_trace(
+    *,
+    normalized_input: str,
+    intent: str,
+    recommended_command: str | None,
+    requires_engine_run: bool,
+    requires_clarification: bool,
+    warnings: tuple[str, ...],
+) -> dict[str, Any]:
+    """
+    Build deterministic routing evidence for an Operator conversation result.
+
+    This is audit information only.
+    It does not call a model, execute tools, mutate the OS, or write memory.
+    """
+    signal_groups = {
+        "destructive_words": matched_phrases(normalized_input, DESTRUCTIVE_WORDS),
+        "action_words": matched_phrases(normalized_input, ACTION_WORDS),
+        "process_words": matched_phrases(normalized_input, PROCESS_WORDS),
+        "memory_words": matched_phrases(normalized_input, MEMORY_WORDS),
+        "slowness_words": matched_phrases(normalized_input, SLOWNESS_WORDS),
+        "health_words": matched_phrases(normalized_input, HEALTH_WORDS),
+        "repair_words": matched_phrases(normalized_input, REPAIR_WORDS),
+    }
+
+    matched_signal_groups = {
+        group_name: matches
+        for group_name, matches in signal_groups.items()
+        if matches
+    }
+
+    matched_signals: list[str] = []
+
+    for group_name, matches in matched_signal_groups.items():
+        for match in matches:
+            matched_signals.append(f"{group_name}:{match}")
+
+    autorun_eligible = intent in {
+        INTENT_PERFORMANCE_DIAGNOSTIC,
+        INTENT_PROCESS_MEMORY_DIAGNOSTIC,
+        INTENT_GENERAL_HEALTH_CHECK,
+    }
+
+    return {
+        "normalized_input": normalized_input,
+        "selected_intent": intent,
+        "safety_class": safety_class_for_intent(intent),
+        "recommended_command": recommended_command,
+        "requires_engine_run": requires_engine_run,
+        "requires_clarification": requires_clarification,
+        "autorun_eligible": autorun_eligible,
+        "matched_signal_groups": matched_signal_groups,
+        "matched_signals": matched_signals,
+        "warnings": list(warnings),
+    }
 
 
 def interpret_destructive_action(
@@ -515,6 +616,36 @@ def build_operator_response(result: OperatorConversationResult) -> str:
 
     if result.safety_note:
         lines.append(f"Safety note: {result.safety_note}")
+
+    trace = result.decision_trace or {}
+
+    if trace:
+        lines.append("Decision trace:")
+
+        for key in (
+            "selected_intent",
+            "safety_class",
+            "autorun_eligible",
+            "requires_engine_run",
+            "requires_clarification",
+        ):
+            value = trace.get(key)
+
+            if isinstance(value, bool):
+                value = "yes" if value else "no"
+
+            if value is not None:
+                lines.append(f"- {key}: {value}")
+
+        matched_signal_groups = trace.get("matched_signal_groups", {})
+
+        if matched_signal_groups:
+            lines.append("- matched_signal_groups:")
+
+            for group_name, matches in matched_signal_groups.items():
+                if matches:
+                    joined_matches = ", ".join(str(match) for match in matches)
+                    lines.append(f"  - {group_name}: {joined_matches}")
 
     if result.warnings:
         lines.append("Warnings:")
