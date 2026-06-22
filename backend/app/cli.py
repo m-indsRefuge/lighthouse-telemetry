@@ -20,6 +20,7 @@ from app.services.confirmation_gate import (
     format_confirmation_request,
 )
 from app.services.confirmation_journal import record_target_confirmation_preview
+from app.services.explanation_composer import compose_engine_explanation
 from app.services.insights import build_system_insight, format_insight_report
 from app.services.lighthouse_engine import (
     LighthouseEngineResult,
@@ -973,6 +974,19 @@ def print_memory_context_summary(engine_result: LighthouseEngineResult) -> None:
         print("Full memory context: available to engine, hidden in normal CLI output.")
 
 
+def print_engine_explanation(engine_result: LighthouseEngineResult) -> None:
+    """
+    Print the deterministic human-facing Lighthouse explanation.
+
+    This does not call the model, execute tools, mutate the OS, or write memory.
+    It only formats the already-produced engine result for the Operator.
+    """
+    explanation = compose_engine_explanation(engine_result)
+
+    print()
+    print(explanation.text)
+
+
 def print_plan_journal_result(engine_result: LighthouseEngineResult) -> None:
     """
     Print the plan-level journal result returned by Lighthouse Engine.
@@ -1030,6 +1044,7 @@ def print_runplan_report(user_request: str) -> None:
     print()
     print(f"Message: {engine_result.message}")
 
+    print_engine_explanation(engine_result)
     print_engine_errors(engine_result)
     print_memory_context_summary(engine_result)
 
