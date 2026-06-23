@@ -1,7 +1,13 @@
 """
 Human-readable Windows evidence report formatter for Lighthouse.
 
-This formats normalized Windows evidence items into an Operator-facing report.
+This formats Windows evidence into an Operator-facing report.
+
+It supports two safe report shapes:
+
+1. CIM-only evidence
+2. Aggregated Windows evidence with deterministic findings
+
 It does not collect telemetry by itself.
 It does not call the model.
 It does not execute tools.
@@ -27,7 +33,7 @@ def signal_values(items: list[dict[str, Any]], signal: str) -> list[Any]:
 def first_signal_value(
     items: list[dict[str, Any]],
     signal: str,
-    default: str = "Unknown",
+    default: Any = "Unknown",
 ) -> Any:
     """
     Return the first value for a signal, or a default.
@@ -57,6 +63,30 @@ def bytes_to_gb(value: Any) -> str:
     return f"{number / (1024 ** 3):.2f} GB"
 
 
+def format_number(value: Any, suffix: str = "", decimals: int = 2) -> str:
+    """
+    Format a number for Operator-facing output.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "Unknown"
+
+    return f"{number:.{decimals}f}{suffix}"
+
+
+def format_seconds(value: Any) -> str:
+    """
+    Format seconds as milliseconds when useful.
+    """
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return "Unknown"
+
+    return f"{seconds * 1000:.2f} ms"
+
+
 def format_disk_lines(items: list[dict[str, Any]]) -> list[str]:
     """
     Build readable disk lines from logical disk CIM evidence.
@@ -76,8 +106,8 @@ def format_disk_lines(items: list[dict[str, Any]]) -> list[str]:
         separator = "" if display_device_id.endswith(":") else ":"
 
         lines.append(
-            f"- {display_device_id}{separator} free {bytes_to_gb(free)} of {bytes_to_gb(size)} "
-            f"({file_system})"
+            f"- {display_device_id}{separator} free {bytes_to_gb(free)} "
+            f"of {bytes_to_gb(size)} ({file_system})"
         )
 
     if not lines:
@@ -114,9 +144,164 @@ def format_memory_module_lines(items: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
-def format_windows_evidence_report(result: dict[str, Any]) -> str:
+def format_collector_lines(result: dict[str, Any]) -> list[str]:
     """
-    Format Windows-native CIM evidence for the Operator.
+    Build collector summary lines from an aggregated Windows evidence result.
+    """
+    collector_results = result.get("collector_results", [])
+
+    if not isinstance(collector_results, list) or not collector_results:
+        return ["- No collector summary available."]
+
+    lines: list[str] = []
+
+    for collector in collector_results:
+        if not isinstance(collector, dict):
+            continue
+
+        name = collector.get("collector", "unknown")
+        status = collector.get("status", "unknown")
+        count = collector.get("evidence_count", 0)
+
+        lines.append(f"- {name}: {status} ({count} evidence items)")
+
+    if not lines:
+        lines.append("- No collector summary available.")
+
+    return lines
+
+
+def format_performance_counter_lines(items: list[dict[str, Any]]) -> list[str]:
+    """
+    Build performance counter summary lines.
+    """
+    return [
+        (
+            "- CPU total time: "
+            f"{format_number(first_signal_value(items, 'processor_total_percent_time', None), '%')}"
+        ),
+        (
+            "- Processor queue length: "
+            f"{format_number(first_signal_value(items, 'processor_queue_length', None))}"
+        ),
+        (
+            "- Memory available: "
+            f"{format_number(first_signal_value(items, 'memory_available_mbytes', None), ' MB')}"
+        ),
+        (
+            "- Memory pages/sec: "
+            f"{format_number(first_signal_value(items, 'memory_pages_per_second', None))}"
+        ),
+        (
+            "- Disk queue length: "
+            f"{format_number(first_signal_value(items, 'physical_disk_avg_queue_length', None))}"
+        ),
+        (
+            "- Disk read latency: "
+            f"{format_seconds(first_signal_value(items, 'physical_disk_avg_seconds_per_read', None))}"
+        ),
+        (
+            "- Disk write latency: "
+            f"{format_seconds(first_signal_value(items, 'physical_disk_avg_seconds_per_write', None))}"
+        ),
+    ]
+
+
+def count_signals(items: list[dict[str, Any]], signals: list[str]) -> int:
+    """
+    Count evidence records matching a set of signals.
+    """
+    return sum(len(signal_values(items, signal)) for signal in signals)
+
+
+def format_event_evidence_lines(items: list[dict[str, Any]]) -> list[str]:
+    """
+    Build Windows event evidence summary lines.
+    """
+    unexpected_shutdown_count = count_signals(
+        items,
+        [
+            "unexpected_shutdown_or_power_loss",
+            "unexpected_shutdown_eventlog",
+        ],
+    )
+    bugcheck_count = count_signals(items, ["windows_bugcheck"])
+    hardware_warning_count = count_signals(items, ["hardware_or_firmware_warning"])
+    storage_warning_count = count_signals(
+        items,
+        [
+            "disk_bad_block_warning",
+            "disk_io_warning",
+            "disk_io_retry_warning",
+            "filesystem_structure_warning",
+            "storage_controller_reset_warning",
+        ],
+    )
+    application_instability_count = count_signals(
+        items,
+        [
+            "application_crash",
+            "application_hang",
+            "windows_error_reporting_event",
+        ],
+    )
+
+    return [
+        f"- Unexpected shutdown evidence: {unexpected_shutdown_count}",
+        f"- BugCheck evidence: {bugcheck_count}",
+        f"- Hardware/firmware warning evidence: {hardware_warning_count}",
+        f"- Storage warning evidence: {storage_warning_count}",
+        f"- Application instability evidence: {application_instability_count}",
+    ]
+
+
+def format_findings_lines(findings_result: dict[str, Any] | None) -> list[str]:
+    """
+    Build deterministic diagnostic finding lines.
+    """
+    if not isinstance(findings_result, dict):
+        return ["- Findings were not generated."]
+
+    data = findings_result.get("data", {})
+
+    if not isinstance(data, dict):
+        return ["- Findings were not generated."]
+
+    findings = data.get("findings", [])
+
+    if not isinstance(findings, list) or not findings:
+        return ["- No findings returned."]
+
+    lines: list[str] = []
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+
+        finding_id = finding.get("finding_id", "unknown_finding")
+        severity = finding.get("severity", "unknown")
+        confidence = finding.get("confidence", "unknown")
+        plain_meaning = finding.get("plain_meaning", "No explanation returned.")
+        next_step = finding.get("recommended_next_step", "No next step returned.")
+        permission_required = finding.get("permission_required", False)
+
+        lines.append(f"- {finding_id} [{severity}, {confidence}]")
+        lines.append(f"  Meaning: {plain_meaning}")
+        lines.append(f"  Next step: {next_step}")
+        lines.append(f"  Permission required: {'yes' if permission_required else 'no'}")
+
+    if not lines:
+        lines.append("- No findings returned.")
+
+    return lines
+
+
+def format_windows_evidence_report(
+    result: dict[str, Any],
+    findings_result: dict[str, Any] | None = None,
+) -> str:
+    """
+    Format Windows-native evidence for the Operator.
     """
     items = result.get("evidence_items", [])
     errors = result.get("errors", [])
@@ -127,19 +312,36 @@ def format_windows_evidence_report(result: dict[str, Any]) -> str:
     if not isinstance(items, list):
         items = []
 
+    if not isinstance(errors, list):
+        errors = []
+
+    if not isinstance(warnings, list):
+        warnings = []
+
+    is_aggregated_report = bool(result.get("collector_results")) or findings_result is not None
+
     lines = [
         "LIGHTHOUSE WINDOWS EVIDENCE",
         "-" * 52,
         f"Status: {result.get('status', 'unknown')}",
         f"Message: {result.get('message', 'No message returned.')}",
-        f"Source: {result.get('source', 'unknown')}",
+        f"Source: {result.get('source', 'aggregated_windows_evidence')}",
         f"Evidence items: {len(items)}",
-        f"Warnings: {len(warnings) if isinstance(warnings, list) else 0}",
-        f"Errors: {len(errors) if isinstance(errors, list) else 0}",
+        f"Warnings: {len(warnings)}",
+        f"Errors: {len(errors)}",
     ]
 
     if summary_data:
         lines.append(f"Schema valid: {summary_data.get('valid', 'unknown')}")
+
+    if is_aggregated_report:
+        lines.extend(
+            [
+                "",
+                "Collectors:",
+            ]
+        )
+        lines.extend(format_collector_lines(result))
 
     lines.extend(
         [
@@ -186,8 +388,32 @@ def format_windows_evidence_report(result: dict[str, Any]) -> str:
             "Physical memory modules:",
         ]
     )
-
     lines.extend(format_memory_module_lines(items))
+
+    if is_aggregated_report:
+        lines.extend(
+            [
+                "",
+                "Performance counters:",
+            ]
+        )
+        lines.extend(format_performance_counter_lines(items))
+
+        lines.extend(
+            [
+                "",
+                "Recent Windows event evidence:",
+            ]
+        )
+        lines.extend(format_event_evidence_lines(items))
+
+        lines.extend(
+            [
+                "",
+                "Deterministic findings:",
+            ]
+        )
+        lines.extend(format_findings_lines(findings_result))
 
     if warnings:
         lines.extend(["", "Warnings:"])
