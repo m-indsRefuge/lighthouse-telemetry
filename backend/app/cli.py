@@ -59,6 +59,11 @@ from app.services.llm_preview_journal import (
     format_llm_route_previews_report,
     record_llm_route_preview,
 )
+from app.services.llm_preview_feedback import (
+    format_llm_preview_feedback_result,
+    format_preview_feedback_labels_report,
+    record_llm_preview_feedback,
+)
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 from app.services.target_resolver import (
     TARGET_STATUS_CANDIDATE_FOUND,
@@ -126,6 +131,8 @@ def print_help() -> None:
     print("model test  Send a tiny safe test prompt to the local Ollama model")
     print("llm preview <text> Preview a model route proposal through LLM Contract V0")
     print("llm previews Show recent LLM route preview journal entries")
+    print("llm preview feedback labels Show valid LLM preview feedback labels")
+    print("llm preview feedback <preview_id> <label> [note] Save feedback for an LLM preview")
     print("events      Show recent crash-relevant Windows events")
     print("windows     Show aggregated Windows-native evidence and findings")
     print("cim         Show Windows-native CIM evidence only")
@@ -148,6 +155,8 @@ def print_help() -> None:
     print("- ask why does my laptop feel slow?")
     print("- llm preview my laptop feels slow")
     print("- llm previews")
+    print("- llm preview feedback labels")
+    print("- llm preview feedback llmprev-example useful routed correctly")
     print("- plan please optimize RAM usage")
     print("- plan delete files to make space")
     print("- plan close Chrome because it is using memory")
@@ -800,6 +809,30 @@ def print_llm_route_previews_report(
     Print recent preview-only LLM route proposal records.
     """
     print(format_llm_route_previews_report(limit=limit, memory_dir=memory_dir))
+
+
+def print_llm_preview_feedback_labels_report() -> None:
+    """
+    Print allowed LLM preview feedback labels.
+    """
+    print(format_preview_feedback_labels_report())
+
+
+def print_llm_preview_feedback_report(
+    preview_id: str,
+    label: str,
+    note: str = "",
+) -> None:
+    """
+    Record and print Operator feedback for an LLM preview id.
+    """
+    result = record_llm_preview_feedback(
+        preview_id=preview_id,
+        label=label,
+        note=note,
+    )
+    print(format_llm_preview_feedback_result(result))
+
 
 def print_model_report() -> None:
     """
@@ -1599,6 +1632,35 @@ def run_canonical_command(command: str) -> str:
         "dataset export llm preview",
     }:
         print_llm_preview_dataset_export_report()
+        return "handled"
+
+    if normalized_command in {
+        "llm preview feedback labels",
+        "llm preview feedback-labels",
+        "llm route preview feedback labels",
+    }:
+        print_llm_preview_feedback_labels_report()
+        return "handled"
+
+    if normalized_command in {"llm preview feedback", "llm route preview feedback"}:
+        print("Usage: llm preview feedback <preview_id> <label> [note]")
+        print("Use 'llm preview feedback labels' to list valid labels.")
+        return "handled"
+
+    if normalized_command.startswith("llm preview feedback "):
+        feedback_text = cleaned_command[len("llm preview feedback "):].strip()
+        parts = feedback_text.split(maxsplit=2)
+
+        if len(parts) < 2:
+            print("Usage: llm preview feedback <preview_id> <label> [note]")
+            print("Use 'llm preview feedback labels' to list valid labels.")
+            return "handled"
+
+        preview_id = parts[0]
+        label = parts[1]
+        note = parts[2] if len(parts) > 2 else ""
+
+        print_llm_preview_feedback_report(preview_id, label, note)
         return "handled"
 
     if normalized_command == "llm preview":
