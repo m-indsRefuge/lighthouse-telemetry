@@ -35,6 +35,11 @@ from app.services.engine_memory_context import (
     EngineMemoryContext,
     build_engine_memory_context,
 )
+from app.services.llm_route_engine import (
+    LLMRouteCallResult,
+    ModelRouteCallable,
+    build_llm_route_call,
+)
 from app.services.target_resolver import (
     TARGET_STATUS_CANDIDATE_FOUND,
     TargetResolution,
@@ -98,6 +103,7 @@ class LighthouseEngineResult:
     plan_journal_result: Any | None
     errors: tuple[str, ...]
     memory_context: EngineMemoryContext | None = None
+    llm_route_contract: LLMRouteCallResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """
@@ -119,8 +125,22 @@ class LighthouseEngineResult:
                 self.plan_journal_result
             ),
             "memory_context": memory_context_to_dict(self.memory_context),
+            "llm_route_contract": llm_route_result_to_dict(self.llm_route_contract),
             "errors": list(self.errors),
         }
+
+
+
+def llm_route_result_to_dict(
+    llm_route_result: LLMRouteCallResult | None,
+) -> dict[str, Any] | None:
+    """
+    Convert an LLM route boundary result into a serializable shape.
+    """
+    if llm_route_result is None:
+        return None
+
+    return llm_route_result.to_dict()
 
 
 def journal_result_to_dict(journal_result: Any | None) -> dict[str, Any] | None:
@@ -278,16 +298,22 @@ def run_lighthouse_engine(
     *,
     include_memory_context: bool = True,
     memory_dir: Path | str | None = None,
+    include_llm_route_contract: bool = False,
+    llm_route_model: ModelRouteCallable | None = None,
 ) -> LighthouseEngineResult:
     """
     Run Lighthouse Engine v1 for a single Operator request.
 
-    This currently supports the same safety boundary as runplan:
+    This supports the same safety boundary as runplan:
     safe read-only tools may execute, but confirmation-gated and blocked tools
     are not executed.
 
     Memory context is read-only. It may retrieve and summarize Lighthouse memory,
     but it does not write memory, execute actions, or call the model.
+
+    The optional LLM route contract boundary may call a model only to produce a
+    contract-shaped route proposal. That proposal is validated and returned as
+    evidence, but it is not used as execution authority.
     """
     cleaned_request = user_request.strip()
 
@@ -303,10 +329,22 @@ def run_lighthouse_engine(
             confirmation_previews=(),
             plan_journal_result=None,
             memory_context=None,
+            llm_route_contract=None,
             errors=(),
         )
 
     errors: list[str] = []
+    llm_route_contract: LLMRouteCallResult | None = None
+
+    if include_llm_route_contract:
+        try:
+            llm_route_contract = build_llm_route_call(
+                cleaned_request,
+                model_callable=llm_route_model,
+            )
+        except Exception as error:  # pragma: no cover - defensive boundary
+            llm_route_contract = None
+            errors.append(f"LLM route contract boundary failed: {error}")
 
     memory_context = build_engine_memory_context(
         cleaned_request,
@@ -329,6 +367,7 @@ def run_lighthouse_engine(
             confirmation_previews=(),
             plan_journal_result=None,
             memory_context=memory_context,
+            llm_route_contract=llm_route_contract,
             errors=tuple(errors + [str(error)]),
         )
 
@@ -355,5 +394,6 @@ def run_lighthouse_engine(
         confirmation_previews=confirmation_previews,
         plan_journal_result=plan_journal_result,
         memory_context=memory_context,
+        llm_route_contract=llm_route_contract,
         errors=tuple(errors),
     )
