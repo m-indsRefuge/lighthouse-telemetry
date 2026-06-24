@@ -9,3 +9,4 @@ data/
 memory/operator_interactions.jsonl
 memory/operator_feedback.jsonl
 memory/datasets/*.jsonl
+memory/llm_route_previews.jsonl
