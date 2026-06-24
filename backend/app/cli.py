@@ -50,6 +50,7 @@ from app.services.lighthouse_engine import (
     run_lighthouse_engine,
 )
 from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
+from app.services.llm_route_engine import build_llm_route_call
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 from app.services.target_resolver import (
     TARGET_STATUS_CANDIDATE_FOUND,
@@ -114,6 +115,7 @@ def print_help() -> None:
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
     print("model test  Send a tiny safe test prompt to the local Ollama model")
+    print("llm preview <text> Preview a model route proposal through LLM Contract V0")
     print("events      Show recent crash-relevant Windows events")
     print("windows     Show aggregated Windows-native evidence and findings")
     print("cim         Show Windows-native CIM evidence only")
@@ -134,6 +136,7 @@ def print_help() -> None:
     print("- show me the last report")
     print("- ask is anything wrong with my laptop?")
     print("- ask why does my laptop feel slow?")
+    print("- llm preview my laptop feels slow")
     print("- plan please optimize RAM usage")
     print("- plan delete files to make space")
     print("- plan close Chrome because it is using memory")
@@ -617,6 +620,137 @@ def print_ask_report(question: str) -> None:
         return
 
     print(result.get("answer", "No answer returned."))
+
+
+def print_llm_route_preview_report(
+    user_request: str,
+    model_callable: Any | None = None,
+) -> None:
+    """
+    Preview a model-proposed route through LLM Contract V0.
+
+    This is preview-only:
+    - it may call the model boundary
+    - it validates model output
+    - it does not execute the recommended command
+    - it does not hand model output into talk or talkrun
+    - it does not mutate the OS
+    """
+    cleaned_request = user_request.strip()
+
+    print("\nLIGHTHOUSE LLM ROUTE PREVIEW")
+    print("=" * 52)
+    print("Mode: preview_only")
+    print("Execution: disabled")
+    print("Authority: deterministic route registry and autorun gate")
+    print()
+
+    if not cleaned_request:
+        print("Status: needs_clarification")
+        print("Message: Please provide a request after llm preview.")
+        print()
+        print("Examples:")
+        print("- llm preview my laptop feels slow")
+        print("- llm preview why is chrome eating memory")
+        print("=" * 52)
+        print("No command was executed by llm preview.")
+        return
+
+    result = build_llm_route_call(
+        cleaned_request,
+        model_callable=model_callable,
+    )
+
+    print(f"Request: {cleaned_request}")
+    print(f"Status: {result.status}")
+    print(f"Message: {result.message}")
+    print(f"Model used: {result.model_used or 'none'}")
+    print(f"Used model: {yes_no(result.used_model)}")
+
+    validation = result.validation
+
+    print()
+    print("Contract validation:")
+    print("-" * 52)
+
+    if validation is None:
+        print("Contract validation: not_available")
+    else:
+        print(f"Contract status: {validation.status}")
+        print(f"Contract valid: {yes_no(validation.valid)}")
+        print(f"Contract message: {validation.message}")
+
+        proposal = validation.normalized_proposal or {}
+
+        print()
+        print("Normalized proposal:")
+        print("-" * 52)
+        print(f"Proposed intent: {proposal.get('proposed_intent', 'unknown')}")
+        print(f"Interpreted request: {proposal.get('interpreted_request')}")
+        print(f"Confidence: {proposal.get('confidence')}")
+
+        handoff = validation.route_handoff or {}
+
+        print()
+        print("Deterministic route handoff:")
+        print("-" * 52)
+
+        if handoff:
+            print(f"Route ready: {yes_no(bool(handoff.get('route_ready')))}")
+            print(f"Route known: {yes_no(bool(handoff.get('route_known')))}")
+            print(f"Intent: {handoff.get('intent')}")
+            print(f"Safety class: {handoff.get('safety_class')}")
+            print(f"Command family: {handoff.get('command_family')}")
+            print(f"Recommended command: {handoff.get('recommended_command')}")
+            print(f"Engine request: {handoff.get('engine_request')}")
+            print(f"Autorun allowed: {yes_no(bool(handoff.get('autorun_allowed')))}")
+            print(
+                "Manual review required: "
+                f"{yes_no(bool(handoff.get('manual_review_required')))}"
+            )
+        else:
+            print("- none")
+
+        if validation.errors:
+            print()
+            print("Contract errors:")
+            print("-" * 52)
+
+            for error in validation.errors:
+                print(f"- {error}")
+
+        if validation.warnings:
+            print()
+            print("Contract warnings:")
+            print("-" * 52)
+
+            for warning in validation.warnings:
+                print(f"- {warning}")
+
+    if result.errors and validation is None:
+        print()
+        print("Boundary errors:")
+        print("-" * 52)
+
+        for error in result.errors:
+            print(f"- {error}")
+
+    if result.warnings and validation is None:
+        print()
+        print("Boundary warnings:")
+        print("-" * 52)
+
+        for warning in result.warnings:
+            print(f"- {warning}")
+
+    print()
+    print("Execution:")
+    print("-" * 52)
+    print("- No command was executed by llm preview.")
+    print("- Model output was not handed to talk or talkrun.")
+    print("- Model output cannot bypass the route registry or autorun gate.")
+    print("=" * 52)
+
 
 
 def print_model_report() -> None:
@@ -1395,6 +1529,15 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("talk "):
         talk_request = cleaned_command[5:].strip()
         print_operator_conversation_report(talk_request)
+        return "handled"
+
+    if normalized_command == "llm preview":
+        print_llm_route_preview_report("")
+        return "handled"
+
+    if normalized_command.startswith("llm preview "):
+        llm_preview_request = cleaned_command[len("llm preview "):].strip()
+        print_llm_route_preview_report(llm_preview_request)
         return "handled"
 
     if normalized_command == "talkrun":
