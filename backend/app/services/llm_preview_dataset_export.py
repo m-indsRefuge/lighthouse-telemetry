@@ -1,8 +1,9 @@
 """
 Deterministic LLM preview dataset export for Lighthouse.
 
-This module converts preview-only LLM route proposal journal records into a
-clean JSONL dataset for later evaluation, review, and translation-layer design.
+This module converts preview-only LLM route proposal journal records and
+Operator feedback into a clean JSONL dataset for later evaluation, review,
+and translation-layer design.
 
 It does not call the model.
 It does not execute tools.
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app.services.llm_preview_feedback import latest_feedback_by_preview_id
 from app.services.llm_preview_journal import (
     DEFAULT_MEMORY_DIR,
     read_llm_route_previews,
@@ -27,13 +29,27 @@ from app.services.llm_preview_journal import (
 DATASET_DIRNAME = "datasets"
 LLM_PREVIEW_DATASET_FILENAME = "llm_preview_route_dataset.jsonl"
 
+CATEGORY_POSITIVE_PREVIEW_EXAMPLE = "positive_preview_example"
 CATEGORY_VALID_ROUTE_PREVIEW = "valid_route_preview"
 CATEGORY_INVALID_CONTRACT_EXAMPLE = "invalid_contract_example"
 CATEGORY_SAFE_UNCERTAIN_PREVIEW = "safe_uncertain_preview"
 CATEGORY_NO_MODEL_OUTPUT = "no_model_output"
 CATEGORY_BOUNDARY_ERROR_REVIEW = "boundary_error_review"
+CATEGORY_CORRECTION_NEEDED = "correction_needed"
 CATEGORY_SAFETY_REVIEW = "safety_review"
 CATEGORY_UNLABELED_PREVIEW = "unlabeled_preview"
+
+POSITIVE_LABELS = frozenset({"useful"})
+CORRECTION_LABELS = frozenset(
+    {
+        "not_useful",
+        "wrong_intent",
+        "wrong_route",
+        "confusing",
+        "corrected",
+    }
+)
+SAFETY_REVIEW_LABELS = frozenset({"unsafe"})
 
 
 def utc_now_iso() -> str:
@@ -79,7 +95,8 @@ def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
 
     with path.open("w", encoding="utf-8") as file:
         for record in records:
-            file.write(json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n")
+            file.write(json.dumps(record, sort_keys=True, ensure_ascii=False))
+            file.write("\n")
 
 
 def safe_dict(value: Any) -> dict[str, Any]:
@@ -89,10 +106,62 @@ def safe_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def classify_preview_training_use(preview: dict[str, Any]) -> dict[str, Any]:
+def feedback_to_payload(feedback: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Return a stable feedback payload for dataset rows.
+    """
+    if not feedback:
+        return {
+            "label": None,
+            "note": None,
+            "feedback_id": None,
+        }
+
+    return {
+        "label": feedback.get("label"),
+        "note": feedback.get("note"),
+        "feedback_id": feedback.get("feedback_id"),
+    }
+
+
+def feedback_label(feedback: dict[str, Any] | None) -> str | None:
+    """
+    Return normalized feedback label when present.
+    """
+    if not feedback:
+        return None
+
+    label = feedback.get("label")
+
+    if isinstance(label, str) and label:
+        return label
+
+    return None
+
+
+def classify_preview_training_use(
+    preview: dict[str, Any],
+    feedback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Deterministically classify how an LLM preview record should be used.
     """
+    label = feedback_label(feedback)
+
+    if label in SAFETY_REVIEW_LABELS:
+        return {
+            "include": False,
+            "category": CATEGORY_SAFETY_REVIEW,
+            "reason": "Operator marked this preview as unsafe.",
+        }
+
+    if label in CORRECTION_LABELS:
+        return {
+            "include": False,
+            "category": CATEGORY_CORRECTION_NEEDED,
+            "reason": "Operator feedback indicates this preview needs correction.",
+        }
+
     safety = safe_dict(preview.get("safety"))
     route_handoff = safe_dict(preview.get("route_handoff"))
 
@@ -132,6 +201,24 @@ def classify_preview_training_use(preview: dict[str, Any]) -> dict[str, Any]:
             "reason": "The preview is a useful negative example for contract validation.",
         }
 
+    if (
+        label in POSITIVE_LABELS
+        and contract_valid is True
+        and route_handoff.get("route_ready") is True
+    ):
+        return {
+            "include": True,
+            "category": CATEGORY_POSITIVE_PREVIEW_EXAMPLE,
+            "reason": "Operator marked a valid route preview as useful.",
+        }
+
+    if label in POSITIVE_LABELS and proposed_intent == "unknown":
+        return {
+            "include": True,
+            "category": CATEGORY_SAFE_UNCERTAIN_PREVIEW,
+            "reason": "Operator marked a safe uncertain preview as useful.",
+        }
+
     if contract_valid is True and route_handoff.get("route_ready") is True:
         return {
             "include": True,
@@ -153,7 +240,10 @@ def classify_preview_training_use(preview: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_dataset_record(preview: dict[str, Any]) -> dict[str, Any]:
+def build_dataset_record(
+    preview: dict[str, Any],
+    feedback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Build one stable LLM preview dataset record.
     """
@@ -198,9 +288,10 @@ def build_dataset_record(preview: dict[str, Any]) -> dict[str, Any]:
             "model_authority": safety.get("model_authority"),
             "os_mutation": safety.get("os_mutation"),
         },
+        "feedback": feedback_to_payload(feedback),
         "errors": list(preview.get("errors", [])),
         "warnings": list(preview.get("warnings", [])),
-        "training_use": classify_preview_training_use(preview),
+        "training_use": classify_preview_training_use(preview, feedback=feedback),
     }
 
 
@@ -210,7 +301,7 @@ def build_llm_preview_dataset(
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Build LLM preview dataset records from the preview journal.
+    Build LLM preview dataset records from the preview journal and feedback.
     """
     preview_limit = limit if limit is not None else 100000
     previews = list(
@@ -221,8 +312,20 @@ def build_llm_preview_dataset(
             )
         )
     )
+    feedback_by_preview = latest_feedback_by_preview_id(memory_dir=memory_dir)
 
-    return [build_dataset_record(preview) for preview in previews]
+    records: list[dict[str, Any]] = []
+
+    for preview in previews:
+        preview_id = preview.get("preview_id")
+        feedback = (
+            feedback_by_preview.get(preview_id)
+            if isinstance(preview_id, str)
+            else None
+        )
+        records.append(build_dataset_record(preview, feedback=feedback))
+
+    return records
 
 
 def summarize_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -244,7 +347,8 @@ def summarize_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
         "total_examples": len(records),
         "included_examples": included_count,
         "review_needed_examples": category_counts.get(CATEGORY_SAFETY_REVIEW, 0)
-        + category_counts.get(CATEGORY_BOUNDARY_ERROR_REVIEW, 0),
+        + category_counts.get(CATEGORY_BOUNDARY_ERROR_REVIEW, 0)
+        + category_counts.get(CATEGORY_CORRECTION_NEEDED, 0),
         "unlabeled_examples": category_counts.get(CATEGORY_UNLABELED_PREVIEW, 0),
         "category_counts": category_counts,
     }
