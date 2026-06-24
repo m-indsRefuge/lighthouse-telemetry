@@ -37,6 +37,10 @@ from app.services.operator_dataset_export import (
     export_operator_route_dataset,
     format_operator_dataset_export_report,
 )
+from app.services.llm_preview_dataset_export import (
+    export_llm_preview_dataset,
+    format_llm_preview_dataset_export_report,
+)
 from app.services.operator_routes import (
     build_operator_routes_report,
     validate_route_handoff_for_autorun,
@@ -115,6 +119,7 @@ def print_help() -> None:
     print("feedback labels Show valid Operator feedback labels")
     print("feedback <trace_id> <label> [note] Save feedback for an interaction")
     print("dataset operator Export Operator route dataset")
+    print("dataset llm preview Export LLM preview route dataset")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -160,6 +165,7 @@ def print_help() -> None:
     print("- feedback labels")
     print("- feedback optrace-example useful routed correctly")
     print("- dataset operator")
+    print("- dataset llm preview")
     print("- windows")
     print("- journal")
 
@@ -1519,6 +1525,15 @@ def print_operator_dataset_export_report() -> None:
     print(format_operator_dataset_export_report(result))
 
 
+
+def print_llm_preview_dataset_export_report() -> None:
+    """
+    Export and print the LLM preview route dataset report.
+    """
+    result = export_llm_preview_dataset()
+    print(format_llm_preview_dataset_export_report(result))
+
+
 def print_operator_routes_report() -> None:
     """
     Print the Operator route registry and policy validation report.
@@ -1575,6 +1590,15 @@ def run_canonical_command(command: str) -> str:
 
     if normalized_command in {"llm previews", "llm preview journal", "llm route previews"}:
         print_llm_route_previews_report()
+        return "handled"
+
+    if normalized_command in {
+        "dataset llm preview",
+        "llm preview dataset",
+        "export llm preview dataset",
+        "dataset export llm preview",
+    }:
+        print_llm_preview_dataset_export_report()
         return "handled"
 
     if normalized_command == "llm preview":
