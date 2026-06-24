@@ -51,6 +51,10 @@ from app.services.lighthouse_engine import (
 )
 from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
 from app.services.llm_route_engine import build_llm_route_call
+from app.services.llm_preview_journal import (
+    format_llm_route_previews_report,
+    record_llm_route_preview,
+)
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 from app.services.target_resolver import (
     TARGET_STATUS_CANDIDATE_FOUND,
@@ -116,6 +120,7 @@ def print_help() -> None:
     print("model       Show local Ollama model status")
     print("model test  Send a tiny safe test prompt to the local Ollama model")
     print("llm preview <text> Preview a model route proposal through LLM Contract V0")
+    print("llm previews Show recent LLM route preview journal entries")
     print("events      Show recent crash-relevant Windows events")
     print("windows     Show aggregated Windows-native evidence and findings")
     print("cim         Show Windows-native CIM evidence only")
@@ -137,6 +142,7 @@ def print_help() -> None:
     print("- ask is anything wrong with my laptop?")
     print("- ask why does my laptop feel slow?")
     print("- llm preview my laptop feels slow")
+    print("- llm previews")
     print("- plan please optimize RAM usage")
     print("- plan delete files to make space")
     print("- plan close Chrome because it is using memory")
@@ -625,6 +631,7 @@ def print_ask_report(question: str) -> None:
 def print_llm_route_preview_report(
     user_request: str,
     model_callable: Any | None = None,
+    memory_dir: Any | None = None,
 ) -> None:
     """
     Preview a model-proposed route through LLM Contract V0.
@@ -659,6 +666,11 @@ def print_llm_route_preview_report(
     result = build_llm_route_call(
         cleaned_request,
         model_callable=model_callable,
+    )
+    journal_result = record_llm_route_preview(
+        user_request=cleaned_request,
+        preview_result=result,
+        memory_dir=memory_dir,
     )
 
     print(f"Request: {cleaned_request}")
@@ -744,6 +756,25 @@ def print_llm_route_preview_report(
             print(f"- {warning}")
 
     print()
+    print("Preview journal:")
+    print("-" * 52)
+    print(f"Status: {journal_result.get('status')}")
+    print(f"Message: {journal_result.get('message')}")
+
+    journal_data = journal_result.get("data", {})
+
+    if isinstance(journal_data, dict):
+        print(f"Preview ID: {journal_data.get('preview_id')}")
+        print(f"Saved: {yes_no(bool(journal_data.get('saved')))}")
+
+    journal_errors = journal_result.get("errors", [])
+
+    if journal_errors:
+        print("Journal errors:")
+        for error in journal_errors:
+            print(f"- {error}")
+
+    print()
     print("Execution:")
     print("-" * 52)
     print("- No command was executed by llm preview.")
@@ -752,6 +783,17 @@ def print_llm_route_preview_report(
     print("=" * 52)
 
 
+
+
+def print_llm_route_previews_report(
+    *,
+    limit: int = 10,
+    memory_dir: Any | None = None,
+) -> None:
+    """
+    Print recent preview-only LLM route proposal records.
+    """
+    print(format_llm_route_previews_report(limit=limit, memory_dir=memory_dir))
 
 def print_model_report() -> None:
     """
@@ -1529,6 +1571,10 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("talk "):
         talk_request = cleaned_command[5:].strip()
         print_operator_conversation_report(talk_request)
+        return "handled"
+
+    if normalized_command in {"llm previews", "llm preview journal", "llm route previews"}:
+        print_llm_route_previews_report()
         return "handled"
 
     if normalized_command == "llm preview":
