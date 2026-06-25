@@ -63,6 +63,10 @@ from app.services.llm_conversation_preview import (
     build_llm_conversation_preview,
     format_llm_conversation_preview_report,
 )
+from app.services.conversational_engine_turn import (
+    build_conversational_engine_turn,
+    format_conversational_engine_turn_report,
+)
 from app.services.llm_preview_feedback import (
     format_llm_preview_feedback_result,
     format_preview_feedback_labels_report,
@@ -135,6 +139,7 @@ def print_help() -> None:
     print("model test  Send a tiny safe test prompt to the local Ollama model")
     print("llm preview <text> Preview a model route proposal through LLM Contract V0")
     print("llm talk <text> Compare deterministic talk with LLM route preview")
+    print("turn <text> Build a full conversational engine turn preview")
     print("llm previews Show recent LLM route preview journal entries")
     print("llm preview feedback labels Show valid LLM preview feedback labels")
     print("llm preview feedback <preview_id> <label> [note] Save feedback for an LLM preview")
@@ -160,6 +165,7 @@ def print_help() -> None:
     print("- ask why does my laptop feel slow?")
     print("- llm preview my laptop feels slow")
     print("- llm talk why is chrome eating memory")
+    print("- turn why is my laptop slow")
     print("- llm previews")
     print("- llm preview feedback labels")
     print("- llm preview feedback llmprev-example useful routed correctly")
@@ -825,6 +831,25 @@ def print_llm_conversation_preview_report(
     print(format_llm_conversation_preview_report(result))
 
 
+
+
+def print_conversational_engine_turn_report(
+    user_request: str,
+    model_callable: Any | None = None,
+    memory_dir: Any | None = None,
+) -> None:
+    """
+    Print one preview-only conversational engine turn.
+
+    This builds the deterministic and LLM route boundaries together, evaluates
+    the autorun gate, records the turn, and executes nothing.
+    """
+    result = build_conversational_engine_turn(
+        user_request,
+        model_callable=model_callable,
+        memory_dir=memory_dir,
+    )
+    print(format_conversational_engine_turn_report(result))
 
 
 def print_llm_preview_feedback_labels_report() -> None:
@@ -1644,6 +1669,24 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("llm talk "):
         llm_talk_request = cleaned_command[len("llm talk "):].strip()
         print_llm_conversation_preview_report(llm_talk_request)
+        return "handled"
+
+    if normalized_command == "turn":
+        print_conversational_engine_turn_report("")
+        return "handled"
+
+    if normalized_command.startswith("turn "):
+        turn_request = cleaned_command[5:].strip()
+        print_conversational_engine_turn_report(turn_request)
+        return "handled"
+
+    if normalized_command == "engine turn":
+        print_conversational_engine_turn_report("")
+        return "handled"
+
+    if normalized_command.startswith("engine turn "):
+        turn_request = cleaned_command[len("engine turn "):].strip()
+        print_conversational_engine_turn_report(turn_request)
         return "handled"
 
     if normalized_command in {"llm previews", "llm preview journal", "llm route previews"}:
