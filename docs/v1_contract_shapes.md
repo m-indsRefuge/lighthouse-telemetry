@@ -21,6 +21,7 @@ EngineMemoryContext
 LLMContractValidationResult
 LLMRouteCallResult
 LLMConversationPreviewResult
+ConversationalEngineTurnResult
 LighthouseEngineResult
 ```
 
@@ -169,6 +170,22 @@ deterministic_result
 llm_route_result
 autorun_gate
 preview_journal_result
+executed
+```
+
+### ConversationalEngineTurnResult
+
+```text
+status
+message
+user_request
+mode
+deterministic_result
+llm_route_result
+selected_route_source
+selected_route_handoff
+autorun_gate
+turn_journal_result
 executed
 ```
 
