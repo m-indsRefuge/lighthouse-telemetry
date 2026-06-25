@@ -37,6 +37,7 @@ def test_readme_links_supporting_docs() -> None:
     assert "docs/safety_model.md" in content
     assert "docs/commands.md" in content
     assert "docs/v1_contract_shapes.md" in content
+    assert "docs/memory_layer_architecture.md" in content
 
 
 def test_safety_model_documents_authority_boundaries() -> None:
