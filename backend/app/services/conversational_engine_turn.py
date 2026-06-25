@@ -557,3 +557,67 @@ def format_conversational_engine_turn_report(
     )
 
     return "\n".join(lines)
+
+def format_conversational_engine_turns_report(
+    *,
+    limit: int = 10,
+    memory_dir: str | Path | None = None,
+) -> str:
+    """
+    Build a plain-text report of recent conversational engine turn records.
+    """
+    turns = read_conversational_engine_turns(limit=limit, memory_dir=memory_dir)
+
+    lines = [
+        "LIGHTHOUSE CONVERSATIONAL ENGINE TURNS",
+        "-" * 52,
+        f"Shown: {len(turns)}",
+    ]
+
+    if not turns:
+        lines.append("No conversational engine turns recorded yet.")
+        return "\n".join(lines)
+
+    for record in turns:
+        deterministic = record.get("deterministic_result", {})
+        llm_route = record.get("llm_route_result", {})
+        selected_handoff = record.get("selected_route_handoff", {})
+        autorun_gate = record.get("autorun_gate", {})
+        safety = record.get("safety", {})
+
+        if not isinstance(deterministic, dict):
+            deterministic = {}
+        if not isinstance(llm_route, dict):
+            llm_route = {}
+        if not isinstance(selected_handoff, dict):
+            selected_handoff = {}
+        if not isinstance(autorun_gate, dict):
+            autorun_gate = {}
+        if not isinstance(safety, dict):
+            safety = {}
+
+        lines.append("")
+        lines.append(f"turn_id: {record.get('turn_id')}")
+        lines.append(f"created_at: {record.get('created_at')}")
+        lines.append(f"status: {record.get('status')}")
+        lines.append(f"original_input: {record.get('original_input')}")
+        lines.append(f"deterministic_intent: {deterministic.get('intent')}")
+        lines.append(f"llm_route_status: {llm_route.get('status')}")
+        lines.append(f"selected_route_source: {record.get('selected_route_source')}")
+        lines.append(f"selected_intent: {selected_handoff.get('intent')}")
+        lines.append(
+            "recommended_command: "
+            f"{selected_handoff.get('recommended_command')}"
+        )
+        lines.append(f"autorun_gate_status: {autorun_gate.get('status')}")
+        lines.append(
+            "autorun_gate_allowed: "
+            f"{'yes' if autorun_gate.get('allowed') else 'no'}"
+        )
+        lines.append(f"executed: {'yes' if safety.get('executed') else 'no'}")
+        lines.append(
+            "preview_only: "
+            f"{'yes' if safety.get('preview_only') else 'no'}"
+        )
+
+    return "\n".join(lines)

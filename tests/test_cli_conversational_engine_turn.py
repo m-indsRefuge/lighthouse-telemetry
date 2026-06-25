@@ -67,3 +67,43 @@ def test_engine_turn_alias_routes_to_conversational_engine_turn(monkeypatch, cap
     assert result == "handled"
     assert calls["user_request"] == "why is chrome eating memory"
     assert "LIGHTHOUSE CONVERSATIONAL ENGINE TURN" in output
+
+def test_turns_command_prints_conversational_turn_history(monkeypatch, capsys) -> None:
+    called = {}
+
+    def fake_report(*, limit=10, memory_dir=None):
+        called["limit"] = limit
+        return "\n".join(
+            [
+                "LIGHTHOUSE CONVERSATIONAL ENGINE TURNS",
+                "Shown: 1",
+                "turn_id: turn-example",
+            ]
+        )
+
+    monkeypatch.setattr(cli, "format_conversational_engine_turns_report", fake_report)
+
+    result = cli.run_canonical_command("turns")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert called["limit"] == 10
+    assert "LIGHTHOUSE CONVERSATIONAL ENGINE TURNS" in output
+    assert "turn_id: turn-example" in output
+
+
+def test_conversation_turns_alias_prints_conversational_turn_history(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "format_conversational_engine_turns_report",
+        lambda *, limit=10, memory_dir=None: "LIGHTHOUSE CONVERSATIONAL ENGINE TURNS",
+    )
+
+    result = cli.run_canonical_command("conversation turns")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "LIGHTHOUSE CONVERSATIONAL ENGINE TURNS" in output
