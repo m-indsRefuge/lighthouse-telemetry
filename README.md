@@ -64,6 +64,7 @@
 
     - [Safety Model](docs/safety_model.md)
     - [V1 Contract Shapes](docs/v1_contract_shapes.md)
+- [Memory Layer Architecture](docs/memory_layer_architecture.md)
 
     ## Requirements
 
@@ -149,6 +150,7 @@
       model test
       llm preview <text>
       llm talk <text>
+      turn <text>
       llm previews
       llm preview feedback labels
       llm preview feedback <preview_id> <label> [note]
@@ -156,6 +158,7 @@
     Dataset export:
       dataset operator
       dataset llm preview
+      dataset turns
 
     Local history:
       save
@@ -209,7 +212,7 @@
     - explicit route policy
     - read-only tool execution
     - confirmation previews for unsafe requests
-    - journals, datasets, feedback, and audit trails
+    - journals, datasets, feedback, audit trails, and memory-layer documentation
     - local optional LLM explanation and route-preview paths
     - contract-shape stability
     - safe CLI operation
