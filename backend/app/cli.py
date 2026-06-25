@@ -66,6 +66,7 @@ from app.services.llm_conversation_preview import (
 from app.services.conversational_engine_turn import (
     build_conversational_engine_turn,
     format_conversational_engine_turn_report,
+    format_conversational_engine_turns_report,
 )
 from app.services.llm_preview_feedback import (
     format_llm_preview_feedback_result,
@@ -140,6 +141,7 @@ def print_help() -> None:
     print("llm preview <text> Preview a model route proposal through LLM Contract V0")
     print("llm talk <text> Compare deterministic talk with LLM route preview")
     print("turn <text> Build a full conversational engine turn preview")
+    print("turns       Show recent conversational engine turn records")
     print("llm previews Show recent LLM route preview journal entries")
     print("llm preview feedback labels Show valid LLM preview feedback labels")
     print("llm preview feedback <preview_id> <label> [note] Save feedback for an LLM preview")
@@ -1608,6 +1610,22 @@ def print_llm_preview_dataset_export_report() -> None:
     print(format_llm_preview_dataset_export_report(result))
 
 
+def print_conversational_engine_turns_report(
+    *,
+    limit: int = 10,
+    memory_dir: Any | None = None,
+) -> None:
+    """
+    Print recent preview-only conversational engine turn records.
+    """
+    print(
+        format_conversational_engine_turns_report(
+            limit=limit,
+            memory_dir=memory_dir,
+        )
+    )
+
+
 def print_operator_routes_report() -> None:
     """
     Print the Operator route registry and policy validation report.
@@ -1691,6 +1709,16 @@ def run_canonical_command(command: str) -> str:
 
     if normalized_command in {"llm previews", "llm preview journal", "llm route previews"}:
         print_llm_route_previews_report()
+        return "handled"
+
+    if normalized_command in {
+        "turns",
+        "conversation turns",
+        "conversational turns",
+        "engine turns",
+        "turn journal",
+    }:
+        print_conversational_engine_turns_report()
         return "handled"
 
     if normalized_command in {

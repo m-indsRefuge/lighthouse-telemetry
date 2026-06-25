@@ -147,3 +147,38 @@ def test_conversational_turn_does_not_execute_when_gate_allows(tmp_path: Path) -
     record = read_conversational_engine_turns(memory_dir=tmp_path)[0]
     assert record["safety"]["tool_execution"] is False
     assert record["safety"]["talkrun_integration"] is False
+
+def test_format_conversational_engine_turns_report_empty(tmp_path: Path) -> None:
+    from app.services.conversational_engine_turn import (
+        format_conversational_engine_turns_report,
+    )
+
+    report = format_conversational_engine_turns_report(memory_dir=tmp_path)
+
+    assert "LIGHTHOUSE CONVERSATIONAL ENGINE TURNS" in report
+    assert "Shown: 0" in report
+    assert "No conversational engine turns recorded yet." in report
+
+
+def test_format_conversational_engine_turns_report_shows_recent_turn(tmp_path: Path) -> None:
+    from app.services.conversational_engine_turn import (
+        format_conversational_engine_turns_report,
+    )
+
+    build_conversational_engine_turn(
+        "why is my laptop slow",
+        model_callable=valid_route_model,
+        memory_dir=tmp_path,
+    )
+
+    report = format_conversational_engine_turns_report(memory_dir=tmp_path)
+
+    assert "LIGHTHOUSE CONVERSATIONAL ENGINE TURNS" in report
+    assert "Shown: 1" in report
+    assert "turn_id: turn-" in report
+    assert "original_input: why is my laptop slow" in report
+    assert "deterministic_intent: performance_diagnostic" in report
+    assert "selected_route_source: llm_contract" in report
+    assert "recommended_command: runplan why is my laptop slow" in report
+    assert "executed: no" in report
+    assert "preview_only: yes" in report
