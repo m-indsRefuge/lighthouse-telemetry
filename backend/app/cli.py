@@ -41,6 +41,10 @@ from app.services.llm_preview_dataset_export import (
     export_llm_preview_dataset,
     format_llm_preview_dataset_export_report,
 )
+from app.services.conversation_turn_dataset_export import (
+    export_conversational_turn_dataset,
+    format_conversational_turn_dataset_export_report,
+)
 from app.services.operator_routes import (
     build_operator_routes_report,
     validate_route_handoff_for_autorun,
@@ -134,6 +138,7 @@ def print_help() -> None:
     print("feedback <trace_id> <label> [note] Save feedback for an interaction")
     print("dataset operator Export Operator route dataset")
     print("dataset llm preview Export LLM preview route dataset")
+    print("dataset turns Export conversational turn dataset")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -1610,6 +1615,14 @@ def print_llm_preview_dataset_export_report() -> None:
     print(format_llm_preview_dataset_export_report(result))
 
 
+def print_conversational_turn_dataset_export_report() -> None:
+    """
+    Export and print the conversational turn dataset report.
+    """
+    result = export_conversational_turn_dataset()
+    print(format_conversational_turn_dataset_export_report(result))
+
+
 def print_conversational_engine_turns_report(
     *,
     limit: int = 10,
@@ -1731,6 +1744,19 @@ def run_canonical_command(command: str) -> str:
         return "handled"
 
     if normalized_command in {
+        "dataset turns",
+        "dataset turn",
+        "dataset conversation turns",
+        "dataset conversational turns",
+        "conversation turn dataset",
+        "conversational turn dataset",
+        "export conversation turn dataset",
+        "dataset export conversation turns",
+    }:
+        print_conversational_turn_dataset_export_report()
+        return "handled"
+
+    if normalized_command in {
         "llm preview feedback labels",
         "llm preview feedback-labels",
         "llm route preview feedback labels",
@@ -1791,7 +1817,7 @@ def run_canonical_command(command: str) -> str:
         return "handled"
 
     if normalized_command in {"dataset", "datasets", "export dataset"}:
-        print("Usage: dataset operator")
+        print("Usage: dataset operator | dataset llm preview | dataset turns")
         return "handled"
 
     if normalized_command in {"interactions", "interaction", "operator interactions"}:
