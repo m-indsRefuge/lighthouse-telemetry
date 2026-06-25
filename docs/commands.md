@@ -200,6 +200,19 @@
 
     Dataset export does not execute routes.
 
+### Conversational turn dataset
+
+```text
+dataset turns
+conversation turn dataset
+```
+
+Exports conversational engine turn examples from `memory/conversation_turns.jsonl`
+to `memory/datasets/conversational_turn_dataset.jsonl`.
+
+This is a dataset-export command only. It does not execute routes, call the
+model, mutate the operating system, or change the turn journal.
+
     ## Local history and audit
 
     ```text
