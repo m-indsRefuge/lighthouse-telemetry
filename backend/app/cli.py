@@ -416,15 +416,6 @@ def print_diagnosis(telemetry: dict[str, Any]) -> None:
     print("=" * 52)
 
 
-def print_windows_evidence_report() -> None:
-    """
-    Collect and print aggregated Windows-native evidence and deterministic findings.
-    """
-    result = collect_windows_evidence()
-    findings_result = build_windows_diagnostic_findings(result.get("evidence_items", []))
-    print(format_windows_evidence_report(result, findings_result=findings_result))
-
-
 def print_windows_cim_evidence_report() -> None:
     """
     Collect and print Windows-native CIM-only evidence.
