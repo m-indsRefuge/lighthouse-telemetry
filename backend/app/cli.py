@@ -59,6 +59,10 @@ from app.services.llm_preview_journal import (
     format_llm_route_previews_report,
     record_llm_route_preview,
 )
+from app.services.llm_conversation_preview import (
+    build_llm_conversation_preview,
+    format_llm_conversation_preview_report,
+)
 from app.services.llm_preview_feedback import (
     format_llm_preview_feedback_result,
     format_preview_feedback_labels_report,
@@ -130,6 +134,7 @@ def print_help() -> None:
     print("model       Show local Ollama model status")
     print("model test  Send a tiny safe test prompt to the local Ollama model")
     print("llm preview <text> Preview a model route proposal through LLM Contract V0")
+    print("llm talk <text> Compare deterministic talk with LLM route preview")
     print("llm previews Show recent LLM route preview journal entries")
     print("llm preview feedback labels Show valid LLM preview feedback labels")
     print("llm preview feedback <preview_id> <label> [note] Save feedback for an LLM preview")
@@ -154,6 +159,7 @@ def print_help() -> None:
     print("- ask is anything wrong with my laptop?")
     print("- ask why does my laptop feel slow?")
     print("- llm preview my laptop feels slow")
+    print("- llm talk why is chrome eating memory")
     print("- llm previews")
     print("- llm preview feedback labels")
     print("- llm preview feedback llmprev-example useful routed correctly")
@@ -809,6 +815,25 @@ def print_llm_route_previews_report(
     Print recent preview-only LLM route proposal records.
     """
     print(format_llm_route_previews_report(limit=limit, memory_dir=memory_dir))
+
+def print_llm_conversation_preview_report(
+    user_request: str,
+    model_callable: Any | None = None,
+    memory_dir: Any | None = None,
+) -> None:
+    """
+    Print a side-by-side deterministic and LLM route preview.
+
+    This is preview-only. It does not execute any route.
+    """
+    result = build_llm_conversation_preview(
+        user_request,
+        model_callable=model_callable,
+        memory_dir=memory_dir,
+    )
+    print(format_llm_conversation_preview_report(result))
+
+
 
 
 def print_llm_preview_feedback_labels_report() -> None:
@@ -1619,6 +1644,15 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("talk "):
         talk_request = cleaned_command[5:].strip()
         print_operator_conversation_report(talk_request)
+        return "handled"
+
+    if normalized_command == "llm talk":
+        print_llm_conversation_preview_report("")
+        return "handled"
+
+    if normalized_command.startswith("llm talk "):
+        llm_talk_request = cleaned_command[len("llm talk "):].strip()
+        print_llm_conversation_preview_report(llm_talk_request)
         return "handled"
 
     if normalized_command in {"llm previews", "llm preview journal", "llm route previews"}:
