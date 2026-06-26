@@ -574,6 +574,7 @@ def format_conversational_turn_dataset_review_report(
         if dataset_path is not None
         else default_dataset_path(memory_dir)
     )
+    dataset_exists = resolved_path.exists()
     records = read_conversational_turn_dataset_records(
         memory_dir=memory_dir,
         dataset_path=dataset_path,
@@ -595,8 +596,15 @@ def format_conversational_turn_dataset_review_report(
     lines.append(f"Source: {resolved_path}")
 
     if not records:
-        lines.append("No conversational turn dataset rows found.")
-        lines.append("Run 'dataset turns' to regenerate the export first.")
+        if dataset_exists:
+            lines.append(
+                "No conversational turn dataset rows matched this review filter."
+            )
+            lines.append("Run 'dataset turns' if the export may be stale.")
+        else:
+            lines.append("No conversational turn dataset export found.")
+            lines.append("Run 'dataset turns' to generate the export first.")
+
         return "\n".join(lines)
 
     for record in records:

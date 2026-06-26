@@ -338,8 +338,8 @@ def test_format_conversational_turn_dataset_review_report_handles_missing_export
 
     assert "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW" in report
     assert "Shown: 0" in report
-    assert "No conversational turn dataset rows found." in report
-    assert "Run 'dataset turns' to regenerate the export first." in report
+    assert "No conversational turn dataset export found." in report
+    assert "Run 'dataset turns' to generate the export first." in report
 
 
 def test_dataset_review_filter_included_rows(tmp_path: Path) -> None:
@@ -506,4 +506,29 @@ def test_dataset_review_filter_handles_empty_matches(tmp_path: Path) -> None:
     assert "Shown: 0" in report
     assert "Filter: category" in report
     assert "Category: does_not_exist" in report
-    assert "No conversational turn dataset rows found." in report
+    assert "No conversational turn dataset rows matched this review filter." in report
+    assert "Run 'dataset turns' if the export may be stale." in report
+
+def test_dataset_review_empty_filter_message_for_existing_export(
+    tmp_path: Path,
+) -> None:
+    build_conversational_engine_turn(
+        "why is my laptop slow",
+        memory_dir=tmp_path,
+    )
+    export_conversational_turn_dataset(memory_dir=tmp_path)
+
+    from app.services.conversation_turn_dataset_export import (
+        format_conversational_turn_dataset_review_report,
+    )
+
+    report = format_conversational_turn_dataset_review_report(
+        memory_dir=tmp_path,
+        filter_mode="corrections",
+    )
+
+    assert "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW" in report
+    assert "Shown: 0" in report
+    assert "Filter: corrections" in report
+    assert "No conversational turn dataset rows matched this review filter." in report
+    assert "Run 'dataset turns' if the export may be stale." in report
