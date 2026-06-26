@@ -182,3 +182,40 @@ def test_format_conversational_engine_turns_report_shows_recent_turn(tmp_path: P
     assert "recommended_command: runplan why is my laptop slow" in report
     assert "executed: no" in report
     assert "preview_only: yes" in report
+
+def test_format_conversational_engine_turns_report_shows_latest_feedback(
+    tmp_path: Path,
+) -> None:
+    from app.services.conversation_turn_feedback import record_turn_feedback
+    from app.services.conversational_engine_turn import (
+        format_conversational_engine_turns_report,
+    )
+
+    result = build_conversational_engine_turn(
+        "why is my laptop slow",
+        model_callable=valid_route_model,
+        memory_dir=tmp_path,
+    )
+
+    assert result.turn_journal_result is not None
+    turn_id = result.turn_journal_result["data"]["turn_id"]
+
+    record_turn_feedback(
+        turn_id=turn_id,
+        label="useful",
+        note="first note",
+        memory_dir=tmp_path,
+    )
+    record_turn_feedback(
+        turn_id=turn_id,
+        label="corrected",
+        note="latest note",
+        memory_dir=tmp_path,
+    )
+
+    report = format_conversational_engine_turns_report(memory_dir=tmp_path)
+
+    assert "LIGHTHOUSE CONVERSATIONAL ENGINE TURNS" in report
+    assert f"turn_id: {turn_id}" in report
+    assert "feedback_label: corrected" in report
+    assert "feedback_note: latest note" in report
