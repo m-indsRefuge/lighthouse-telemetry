@@ -44,9 +44,9 @@ def test_ag003_talkrun_passes_deterministic_engine_request(monkeypatch, capsys) 
     """
     calls: list[str] = []
 
-    def fake_runplan(request: str) -> None:
-        calls.append(request)
-        print(f"RUNPLAN CALLED: {request}")
+    def fake_runplan(user_request: str) -> None:
+        calls.append(user_request)
+        print(f"RUNPLAN CALLED: {user_request}")
 
     monkeypatch.setattr(cli, "print_runplan_report", fake_runplan)
 
@@ -63,14 +63,14 @@ def test_ag003_talkrun_passes_deterministic_engine_request(monkeypatch, capsys) 
 
 
 @pytest.mark.parametrize(
-    ("request", "expected_intent"),
+    ("user_request", "expected_intent"),
     [
         ("close chrome", "os_action_request"),
         ("delete files to make space", "destructive_action_request"),
     ],
 )
 def test_ag003_talkrun_refuses_high_risk_intents(
-    request: str,
+    user_request: str,
     expected_intent: str,
     monkeypatch,
     capsys,
@@ -81,9 +81,13 @@ def test_ag003_talkrun_refuses_high_risk_intents(
     """
     calls: list[str] = []
 
-    monkeypatch.setattr(cli, "print_runplan_report", lambda request: calls.append(request))
+    monkeypatch.setattr(
+        cli,
+        "print_runplan_report",
+        lambda engine_request: calls.append(engine_request),
+    )
 
-    cli.print_operator_conversation_run_report(request)
+    cli.print_operator_conversation_run_report(user_request)
 
     output = capsys.readouterr().out
 
@@ -102,7 +106,11 @@ def test_ag003_talkrun_whitespace_input_does_not_execute(monkeypatch, capsys) ->
     """
     calls: list[str] = []
 
-    monkeypatch.setattr(cli, "print_runplan_report", lambda request: calls.append(request))
+    monkeypatch.setattr(
+        cli,
+        "print_runplan_report",
+        lambda engine_request: calls.append(engine_request),
+    )
 
     cli.print_operator_conversation_run_report("   ")
 
