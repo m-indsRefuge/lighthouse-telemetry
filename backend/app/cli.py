@@ -79,6 +79,7 @@ from app.services.llm_preview_feedback import (
 )
 from app.services.conversation_turn_feedback import (
     format_turn_feedback_labels_report,
+    format_turn_feedback_report,
     format_turn_feedback_result,
     record_turn_feedback,
 )
@@ -153,6 +154,7 @@ def print_help() -> None:
     print("turn <text> Build a full conversational engine turn preview")
     print("turns       Show recent conversational engine turn records")
     print("turn feedback labels Show valid conversational turn feedback labels")
+    print("turn feedbacks Show recent conversational turn feedback records")
     print("turn feedback <turn_id> <label> [note] Save feedback for a turn")
     print("llm previews Show recent LLM route preview journal entries")
     print("llm preview feedback labels Show valid LLM preview feedback labels")
@@ -181,6 +183,7 @@ def print_help() -> None:
     print("- llm talk why is chrome eating memory")
     print("- turn why is my laptop slow")
     print("- turn feedback labels")
+    print("- turn feedbacks")
     print("- turn feedback turn-example useful routed correctly")
     print("- llm previews")
     print("- llm preview feedback labels")
@@ -1604,6 +1607,13 @@ def print_turn_feedback_labels_report() -> None:
     print(format_turn_feedback_labels_report())
 
 
+def print_turn_feedbacks_report(limit: int = 10) -> None:
+    """
+    Print recent conversational turn feedback records.
+    """
+    print(format_turn_feedback_report(limit=limit))
+
+
 def print_turn_feedback_report(turn_id: str, label: str, note: str = "") -> None:
     """
     Record and print feedback for a conversational turn id.
@@ -1724,6 +1734,18 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("llm talk "):
         llm_talk_request = cleaned_command[len("llm talk "):].strip()
         print_llm_conversation_preview_report(llm_talk_request)
+        return "handled"
+
+    if normalized_command in {
+        "turn feedbacks",
+        "turn feedback journal",
+        "turn feedback log",
+        "conversation turn feedbacks",
+        "conversation turn feedback journal",
+        "conversational turn feedbacks",
+        "conversational turn feedback journal",
+    }:
+        print_turn_feedbacks_report()
         return "handled"
 
     if normalized_command in {
