@@ -23,6 +23,7 @@ from app.services.conversational_engine_turn import (
     conversational_turn_journal_path,
     read_jsonl,
 )
+from app.services.conversation_turn_feedback import latest_feedback_by_turn_id
 
 
 DATASET_DIRNAME = "datasets"
@@ -34,7 +35,14 @@ CATEGORY_CONTRACT_REJECTION_TURN = "contract_rejection_turn"
 CATEGORY_SAFE_PREVIEW_TURN = "safe_preview_turn"
 CATEGORY_NEEDS_CLARIFICATION_TURN = "needs_clarification_turn"
 CATEGORY_SAFETY_REVIEW = "safety_review"
+CATEGORY_CORRECTION_NEEDED = "correction_needed"
 CATEGORY_UNLABELED_TURN = "unlabeled_turn"
+
+POSITIVE_FEEDBACK_LABELS = frozenset({"useful"})
+CORRECTION_FEEDBACK_LABELS = frozenset(
+    {"not_useful", "wrong_intent", "wrong_route", "confusing", "corrected"}
+)
+SAFETY_REVIEW_FEEDBACK_LABELS = frozenset({"unsafe"})
 
 
 def utc_now_iso() -> str:
@@ -98,6 +106,39 @@ def safe_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def feedback_to_payload(feedback: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Return a stable feedback payload for dataset rows.
+    """
+    if not feedback:
+        return {
+            "label": None,
+            "note": None,
+            "feedback_id": None,
+        }
+
+    return {
+        "label": feedback.get("label"),
+        "note": feedback.get("note"),
+        "feedback_id": feedback.get("feedback_id"),
+    }
+
+
+def feedback_label(feedback: dict[str, Any] | None) -> str | None:
+    """
+    Return normalized feedback label when present.
+    """
+    if not feedback:
+        return None
+
+    label = feedback.get("label")
+
+    if isinstance(label, str) and label:
+        return label
+
+    return None
+
+
 def read_conversational_turn_records(
     *,
     memory_dir: str | Path | None = None,
@@ -117,7 +158,10 @@ def read_conversational_turn_records(
     return records[-limit:]
 
 
-def classify_turn_training_use(turn: dict[str, Any]) -> dict[str, Any]:
+def classify_turn_training_use(
+    turn: dict[str, Any],
+    feedback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Deterministically classify how a conversational turn should be used.
     """
@@ -126,6 +170,21 @@ def classify_turn_training_use(turn: dict[str, Any]) -> dict[str, Any]:
     selected_handoff = safe_dict(turn.get("selected_route_handoff"))
     autorun_gate = safe_dict(turn.get("autorun_gate"))
     safety = safe_dict(turn.get("safety"))
+    label = feedback_label(feedback)
+
+    if label in SAFETY_REVIEW_FEEDBACK_LABELS:
+        return {
+            "include": False,
+            "category": CATEGORY_SAFETY_REVIEW,
+            "reason": "Operator marked this conversational turn as unsafe.",
+        }
+
+    if label in CORRECTION_FEEDBACK_LABELS:
+        return {
+            "include": False,
+            "category": CATEGORY_CORRECTION_NEEDED,
+            "reason": "Operator feedback indicates this turn needs correction.",
+        }
 
     if (
         safety.get("executed") is True
@@ -184,7 +243,10 @@ def classify_turn_training_use(turn: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_dataset_record(turn: dict[str, Any]) -> dict[str, Any]:
+def build_dataset_record(
+    turn: dict[str, Any],
+    feedback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Build one stable conversational turn dataset record.
     """
@@ -255,7 +317,8 @@ def build_dataset_record(turn: dict[str, Any]) -> dict[str, Any]:
             + safe_list(llm_route.get("warnings"))
             + safe_list(autorun_gate.get("warnings"))
         ),
-        "training_use": classify_turn_training_use(turn),
+        "feedback": feedback_to_payload(feedback),
+        "training_use": classify_turn_training_use(turn, feedback=feedback),
     }
 
 
@@ -268,7 +331,20 @@ def build_conversational_turn_dataset(
     Build conversational turn dataset records from the turn journal.
     """
     turns = read_conversational_turn_records(memory_dir=memory_dir, limit=limit)
-    return [build_dataset_record(turn) for turn in turns]
+    feedback_by_turn = latest_feedback_by_turn_id(memory_dir=memory_dir)
+
+    records: list[dict[str, Any]] = []
+
+    for turn in turns:
+        turn_id = turn.get("turn_id")
+        feedback = (
+            feedback_by_turn.get(turn_id)
+            if isinstance(turn_id, str)
+            else None
+        )
+        records.append(build_dataset_record(turn, feedback=feedback))
+
+    return records
 
 
 def summarize_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -288,6 +364,7 @@ def summarize_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     review_needed = category_counts.get(CATEGORY_SAFETY_REVIEW, 0)
     review_needed += category_counts.get(CATEGORY_CONTRACT_REJECTION_TURN, 0)
+    review_needed += category_counts.get(CATEGORY_CORRECTION_NEEDED, 0)
 
     return {
         "total_examples": len(records),

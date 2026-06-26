@@ -77,6 +77,11 @@ from app.services.llm_preview_feedback import (
     format_preview_feedback_labels_report,
     record_llm_preview_feedback,
 )
+from app.services.conversation_turn_feedback import (
+    format_turn_feedback_labels_report,
+    format_turn_feedback_result,
+    record_turn_feedback,
+)
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 from app.services.target_resolver import (
     TARGET_STATUS_CANDIDATE_FOUND,
@@ -147,6 +152,8 @@ def print_help() -> None:
     print("llm talk <text> Compare deterministic talk with LLM route preview")
     print("turn <text> Build a full conversational engine turn preview")
     print("turns       Show recent conversational engine turn records")
+    print("turn feedback labels Show valid conversational turn feedback labels")
+    print("turn feedback <turn_id> <label> [note] Save feedback for a turn")
     print("llm previews Show recent LLM route preview journal entries")
     print("llm preview feedback labels Show valid LLM preview feedback labels")
     print("llm preview feedback <preview_id> <label> [note] Save feedback for an LLM preview")
@@ -173,6 +180,8 @@ def print_help() -> None:
     print("- llm preview my laptop feels slow")
     print("- llm talk why is chrome eating memory")
     print("- turn why is my laptop slow")
+    print("- turn feedback labels")
+    print("- turn feedback turn-example useful routed correctly")
     print("- llm previews")
     print("- llm preview feedback labels")
     print("- llm preview feedback llmprev-example useful routed correctly")
@@ -1588,6 +1597,21 @@ def print_operator_feedback_report(trace_id: str, label: str, note: str = "") ->
     print(format_operator_feedback_result(result))
 
 
+def print_turn_feedback_labels_report() -> None:
+    """
+    Print allowed conversational turn feedback labels.
+    """
+    print(format_turn_feedback_labels_report())
+
+
+def print_turn_feedback_report(turn_id: str, label: str, note: str = "") -> None:
+    """
+    Record and print feedback for a conversational turn id.
+    """
+    result = record_turn_feedback(turn_id=turn_id, label=label, note=note)
+    print(format_turn_feedback_result(result))
+
+
 def print_trace_id_from_journal_result(journal_result: dict[str, Any]) -> None:
     """
     Print a trace id when a journal write succeeds.
@@ -1700,6 +1724,72 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("llm talk "):
         llm_talk_request = cleaned_command[len("llm talk "):].strip()
         print_llm_conversation_preview_report(llm_talk_request)
+        return "handled"
+
+    if normalized_command in {
+        "turn feedback labels",
+        "turn feedback-labels",
+        "conversation turn feedback labels",
+        "conversational turn feedback labels",
+    }:
+        print_turn_feedback_labels_report()
+        return "handled"
+
+    if normalized_command in {
+        "turn feedback",
+        "conversation turn feedback",
+        "conversational turn feedback",
+    }:
+        print("Usage: turn feedback <turn_id> <label> [note]")
+        print("Use 'turn feedback labels' to list valid labels.")
+        return "handled"
+
+    if normalized_command.startswith("turn feedback "):
+        feedback_text = cleaned_command[len("turn feedback "):].strip()
+        parts = feedback_text.split(maxsplit=2)
+
+        if len(parts) < 2:
+            print("Usage: turn feedback <turn_id> <label> [note]")
+            print("Use 'turn feedback labels' to list valid labels.")
+            return "handled"
+
+        turn_id = parts[0]
+        label = parts[1]
+        note = parts[2] if len(parts) > 2 else ""
+
+        print_turn_feedback_report(turn_id, label, note)
+        return "handled"
+
+    if normalized_command.startswith("conversation turn feedback "):
+        feedback_text = cleaned_command[len("conversation turn feedback "):].strip()
+        parts = feedback_text.split(maxsplit=2)
+
+        if len(parts) < 2:
+            print("Usage: conversation turn feedback <turn_id> <label> [note]")
+            print("Use 'turn feedback labels' to list valid labels.")
+            return "handled"
+
+        turn_id = parts[0]
+        label = parts[1]
+        note = parts[2] if len(parts) > 2 else ""
+
+        print_turn_feedback_report(turn_id, label, note)
+        return "handled"
+
+    if normalized_command.startswith("conversational turn feedback "):
+        feedback_text = cleaned_command[len("conversational turn feedback "):].strip()
+        parts = feedback_text.split(maxsplit=2)
+
+        if len(parts) < 2:
+            print("Usage: conversational turn feedback <turn_id> <label> [note]")
+            print("Use 'turn feedback labels' to list valid labels.")
+            return "handled"
+
+        turn_id = parts[0]
+        label = parts[1]
+        note = parts[2] if len(parts) > 2 else ""
+
+        print_turn_feedback_report(turn_id, label, note)
         return "handled"
 
     if normalized_command == "turn":
