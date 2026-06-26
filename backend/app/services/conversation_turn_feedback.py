@@ -18,7 +18,10 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from app.services.conversational_engine_turn import DEFAULT_MEMORY_DIR
+from app.services.conversational_engine_turn import (
+    DEFAULT_MEMORY_DIR,
+    conversational_turn_journal_path,
+)
 
 
 TURN_FEEDBACK_JOURNAL_FILENAME = "conversation_turn_feedback.jsonl"
@@ -104,6 +107,26 @@ def build_turn_feedback_record(
     }
 
 
+def conversational_turn_exists(
+    *,
+    turn_id: str,
+    memory_dir: str | Path | None = None,
+) -> bool:
+    """
+    Return true when the referenced conversational turn exists in the turn journal.
+    """
+    cleaned_turn_id = turn_id.strip()
+
+    if not cleaned_turn_id:
+        return False
+
+    for record in read_jsonl(conversational_turn_journal_path(memory_dir)):
+        if record.get("turn_id") == cleaned_turn_id:
+            return True
+
+    return False
+
+
 def record_turn_feedback(
     *,
     turn_id: str,
@@ -134,6 +157,25 @@ def record_turn_feedback(
                 "allowed_labels": list_turn_feedback_labels(),
             },
             "errors": [f"Unsupported feedback label: {normalized_label}"],
+            "warnings": [],
+        }
+
+    if not conversational_turn_exists(
+        turn_id=cleaned_turn_id,
+        memory_dir=memory_dir,
+    ):
+        return {
+            "status": "invalid",
+            "message": "Conversational turn ID was not found.",
+            "data": {
+                "saved": False,
+                "turn_id": cleaned_turn_id,
+                "label": normalized_label,
+            },
+            "errors": [
+                "Unknown conversational turn id. Run 'turns' to copy a real "
+                "turn id, or use 'turn feedback latest <label> [note]'."
+            ],
             "warnings": [],
         }
 

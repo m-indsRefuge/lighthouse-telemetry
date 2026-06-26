@@ -244,3 +244,33 @@ def test_turn_feedback_literal_placeholder_is_rejected(
     assert "Usage: turn feedback <turn_id> <label> [note]" in output
     assert "Do not include angle brackets." in output
     assert "turn feedback latest <label> [note]" in output
+
+def test_turn_feedback_command_surfaces_unknown_turn_response(monkeypatch, capsys) -> None:
+    def fake_record(*, turn_id: str, label: str, note: str = ""):
+        return {
+            "status": "invalid",
+            "message": "Conversational turn ID was not found.",
+            "data": {
+                "saved": False,
+                "turn_id": turn_id,
+                "label": label,
+            },
+            "errors": [
+                "Unknown conversational turn id. Run 'turns' to copy a real turn id, "
+                "or use 'turn feedback latest <label> [note]'."
+            ],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(cli, "record_turn_feedback", fake_record)
+
+    result = cli.run_canonical_command(
+        "turn feedback turn-missing useful routed correctly"
+    )
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "Status: invalid" in output
+    assert "Conversational turn ID was not found." in output
+    assert "Saved: no" in output
+    assert "turn feedback latest" in output
