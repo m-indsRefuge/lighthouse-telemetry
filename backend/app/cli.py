@@ -147,6 +147,9 @@ def print_help() -> None:
     print("dataset llm preview Export LLM preview route dataset")
     print("dataset turns Export conversational turn dataset")
     print("dataset turns review Review exported conversational turn dataset rows")
+    print("dataset turns review included Review included dataset rows")
+    print("dataset turns review excluded Review excluded dataset rows")
+    print("dataset turns review feedback Review feedback-labeled dataset rows")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -1659,11 +1662,23 @@ def print_conversational_turn_dataset_export_report() -> None:
     print(format_conversational_turn_dataset_export_report(result))
 
 
-def print_conversational_turn_dataset_review_report(limit: int = 10) -> None:
+def print_conversational_turn_dataset_review_report(
+    limit: int = 10,
+    filter_mode: str = "all",
+    category: str | None = None,
+) -> None:
     """
     Print recent rows from the exported conversational turn dataset.
     """
-    print(format_conversational_turn_dataset_review_report(limit=limit))
+    report_kwargs: dict[str, Any] = {"limit": limit}
+
+    if filter_mode != "all":
+        report_kwargs["filter_mode"] = filter_mode
+
+    if category is not None:
+        report_kwargs["category"] = category
+
+    print(format_conversational_turn_dataset_review_report(**report_kwargs))
 
 
 def print_conversational_engine_turns_report(
@@ -1873,6 +1888,50 @@ def run_canonical_command(command: str) -> str:
         "conversational turn dataset review",
     }:
         print_conversational_turn_dataset_review_report()
+        return "handled"
+
+    dataset_review_filter_commands = {
+        "dataset turns review included": "included",
+        "dataset turns rows included": "included",
+        "dataset turns review excluded": "excluded",
+        "dataset turns rows excluded": "excluded",
+        "dataset turns review feedback": "feedback",
+        "dataset turns rows feedback": "feedback",
+        "dataset turns review corrections": "corrections",
+        "dataset turns rows corrections": "corrections",
+        "dataset turns review review-needed": "review_needed",
+        "dataset turns review review_needed": "review_needed",
+        "dataset turns rows review-needed": "review_needed",
+        "dataset turns rows review_needed": "review_needed",
+    }
+
+    if normalized_command in dataset_review_filter_commands:
+        print_conversational_turn_dataset_review_report(
+            filter_mode=dataset_review_filter_commands[normalized_command],
+        )
+        return "handled"
+
+    if normalized_command in {
+        "dataset turns review category",
+        "dataset turns rows category",
+    }:
+        print("Usage: dataset turns review category <category>")
+        return "handled"
+
+    if normalized_command.startswith("dataset turns review category "):
+        category = cleaned_command[len("dataset turns review category "):].strip()
+        print_conversational_turn_dataset_review_report(
+            filter_mode="category",
+            category=category,
+        )
+        return "handled"
+
+    if normalized_command.startswith("dataset turns rows category "):
+        category = cleaned_command[len("dataset turns rows category "):].strip()
+        print_conversational_turn_dataset_review_report(
+            filter_mode="category",
+            category=category,
+        )
         return "handled"
 
     if normalized_command.startswith("dataset turns review "):

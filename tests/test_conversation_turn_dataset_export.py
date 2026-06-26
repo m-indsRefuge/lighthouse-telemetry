@@ -340,3 +340,170 @@ def test_format_conversational_turn_dataset_review_report_handles_missing_export
     assert "Shown: 0" in report
     assert "No conversational turn dataset rows found." in report
     assert "Run 'dataset turns' to regenerate the export first." in report
+
+
+def test_dataset_review_filter_included_rows(tmp_path: Path) -> None:
+    build_conversational_engine_turn(
+        "why is my laptop slow",
+        memory_dir=tmp_path,
+    )
+    build_conversational_engine_turn(
+        "feedback",
+        memory_dir=tmp_path,
+    )
+    export_conversational_turn_dataset(memory_dir=tmp_path)
+
+    from app.services.conversation_turn_dataset_export import (
+        read_conversational_turn_dataset_records,
+    )
+
+    records = read_conversational_turn_dataset_records(
+        memory_dir=tmp_path,
+        filter_mode="included",
+    )
+
+    assert len(records) == 1
+    assert records[0]["training_use"]["include"] is True
+    assert records[0]["input"]["normalized"] == "why is my laptop slow"
+
+
+def test_dataset_review_filter_excluded_rows(tmp_path: Path) -> None:
+    build_conversational_engine_turn(
+        "why is my laptop slow",
+        memory_dir=tmp_path,
+    )
+    build_conversational_engine_turn(
+        "feedback",
+        memory_dir=tmp_path,
+    )
+    export_conversational_turn_dataset(memory_dir=tmp_path)
+
+    from app.services.conversation_turn_dataset_export import (
+        read_conversational_turn_dataset_records,
+    )
+
+    records = read_conversational_turn_dataset_records(
+        memory_dir=tmp_path,
+        filter_mode="excluded",
+    )
+
+    assert len(records) == 1
+    assert records[0]["training_use"]["include"] is False
+    assert records[0]["training_use"]["category"] == "needs_clarification_turn"
+
+
+def test_dataset_review_filter_feedback_rows(tmp_path: Path) -> None:
+    first_turn = build_conversational_engine_turn(
+        "why is my laptop slow",
+        memory_dir=tmp_path,
+    )
+    build_conversational_engine_turn(
+        "why is chrome eating memory",
+        memory_dir=tmp_path,
+    )
+
+    assert first_turn.turn_journal_result is not None
+    turn_id = first_turn.turn_journal_result["data"]["turn_id"]
+
+    from app.services.conversation_turn_feedback import record_turn_feedback
+    from app.services.conversation_turn_dataset_export import (
+        read_conversational_turn_dataset_records,
+    )
+
+    record_turn_feedback(
+        turn_id=turn_id,
+        label="useful",
+        note="good route",
+        memory_dir=tmp_path,
+    )
+    export_conversational_turn_dataset(memory_dir=tmp_path)
+
+    records = read_conversational_turn_dataset_records(
+        memory_dir=tmp_path,
+        filter_mode="feedback",
+    )
+
+    assert len(records) == 1
+    assert records[0]["turn_id"] == turn_id
+    assert records[0]["feedback"]["label"] == "useful"
+
+
+def test_dataset_review_filter_corrections_rows(tmp_path: Path) -> None:
+    turn_result = build_conversational_engine_turn(
+        "why is my laptop slow",
+        memory_dir=tmp_path,
+    )
+
+    assert turn_result.turn_journal_result is not None
+    turn_id = turn_result.turn_journal_result["data"]["turn_id"]
+
+    from app.services.conversation_turn_feedback import record_turn_feedback
+    from app.services.conversation_turn_dataset_export import (
+        read_conversational_turn_dataset_records,
+    )
+
+    record_turn_feedback(
+        turn_id=turn_id,
+        label="wrong_route",
+        note="should route differently",
+        memory_dir=tmp_path,
+    )
+    export_conversational_turn_dataset(memory_dir=tmp_path)
+
+    records = read_conversational_turn_dataset_records(
+        memory_dir=tmp_path,
+        filter_mode="corrections",
+    )
+
+    assert len(records) == 1
+    assert records[0]["turn_id"] == turn_id
+    assert records[0]["training_use"]["category"] == "correction_needed"
+
+
+def test_dataset_review_filter_category_rows(tmp_path: Path) -> None:
+    build_conversational_engine_turn(
+        "why is my laptop slow",
+        memory_dir=tmp_path,
+    )
+    build_conversational_engine_turn(
+        "feedback",
+        memory_dir=tmp_path,
+    )
+    export_conversational_turn_dataset(memory_dir=tmp_path)
+
+    from app.services.conversation_turn_dataset_export import (
+        read_conversational_turn_dataset_records,
+    )
+
+    records = read_conversational_turn_dataset_records(
+        memory_dir=tmp_path,
+        filter_mode="category",
+        category="needs_clarification_turn",
+    )
+
+    assert len(records) == 1
+    assert records[0]["training_use"]["category"] == "needs_clarification_turn"
+
+
+def test_dataset_review_filter_handles_empty_matches(tmp_path: Path) -> None:
+    build_conversational_engine_turn(
+        "why is my laptop slow",
+        memory_dir=tmp_path,
+    )
+    export_conversational_turn_dataset(memory_dir=tmp_path)
+
+    from app.services.conversation_turn_dataset_export import (
+        format_conversational_turn_dataset_review_report,
+    )
+
+    report = format_conversational_turn_dataset_review_report(
+        memory_dir=tmp_path,
+        filter_mode="category",
+        category="does_not_exist",
+    )
+
+    assert "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW" in report
+    assert "Shown: 0" in report
+    assert "Filter: category" in report
+    assert "Category: does_not_exist" in report
+    assert "No conversational turn dataset rows found." in report

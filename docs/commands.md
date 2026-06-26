@@ -268,3 +268,18 @@ This does not regenerate the dataset, call a model, execute tools, mutate the
 operating system, or rewrite journals. Run `dataset turns` first when the export
 is missing or stale.
 
+## Conversational turn dataset review filters
+
+```text
+dataset turns review included
+dataset turns review excluded
+dataset turns review feedback
+dataset turns review corrections
+dataset turns review review-needed
+dataset turns review category <category>
+```
+
+Filters rows from the current exported conversational turn dataset artifact.
+These commands do not regenerate the dataset, rewrite journals, delete memory,
+call a model, execute tools, or mutate the operating system.
+
