@@ -78,3 +78,62 @@ def test_conversation_turn_dataset_alias_exports_dataset(monkeypatch, capsys) ->
 
     assert result == "handled"
     assert "LIGHTHOUSE CONVERSATIONAL TURN DATASET EXPORT" in output
+
+
+def test_dataset_turns_review_command_prints_dataset_review(monkeypatch, capsys) -> None:
+    calls = {}
+
+    def fake_review_report(limit=10):
+        calls["limit"] = limit
+        return "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW\nShown: 10"
+
+    monkeypatch.setattr(
+        cli,
+        "format_conversational_turn_dataset_review_report",
+        fake_review_report,
+    )
+
+    result = cli.run_canonical_command("dataset turns review")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert calls["limit"] == 10
+    assert "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW" in output
+
+
+def test_dataset_turns_review_limit_command_prints_dataset_review(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls = {}
+
+    def fake_review_report(limit=10):
+        calls["limit"] = limit
+        return "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW\nShown: 2"
+
+    monkeypatch.setattr(
+        cli,
+        "format_conversational_turn_dataset_review_report",
+        fake_review_report,
+    )
+
+    result = cli.run_canonical_command("dataset turns review 2")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert calls["limit"] == 2
+    assert "Shown: 2" in output
+
+
+def test_dataset_turns_rows_alias_prints_dataset_review(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "format_conversational_turn_dataset_review_report",
+        lambda limit=10: "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW",
+    )
+
+    result = cli.run_canonical_command("dataset turns rows")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW" in output

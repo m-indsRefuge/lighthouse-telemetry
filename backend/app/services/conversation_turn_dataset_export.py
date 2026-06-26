@@ -439,6 +439,90 @@ def export_conversational_turn_dataset(
         }
 
 
+def read_conversational_turn_dataset_records(
+    *,
+    memory_dir: str | Path | None = None,
+    dataset_path: str | Path | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Read recent exported conversational turn dataset rows, newest first.
+
+    This reviews the dataset artifact. It does not regenerate the export.
+    """
+    if limit <= 0:
+        return []
+
+    resolved_path = (
+        Path(dataset_path)
+        if dataset_path is not None
+        else default_dataset_path(memory_dir)
+    )
+
+    records = read_jsonl(resolved_path)
+    return list(reversed(records))[:limit]
+
+
+def format_conversational_turn_dataset_review_report(
+    *,
+    memory_dir: str | Path | None = None,
+    dataset_path: str | Path | None = None,
+    limit: int = 10,
+) -> str:
+    """
+    Build a plain-text review report for exported conversational turn dataset rows.
+    """
+    resolved_path = (
+        Path(dataset_path)
+        if dataset_path is not None
+        else default_dataset_path(memory_dir)
+    )
+    records = read_conversational_turn_dataset_records(
+        memory_dir=memory_dir,
+        dataset_path=dataset_path,
+        limit=limit,
+    )
+
+    lines = [
+        "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW",
+        "-" * 52,
+        f"Shown: {len(records)}",
+        f"Source: {resolved_path}",
+    ]
+
+    if not records:
+        lines.append("No conversational turn dataset rows found.")
+        lines.append("Run 'dataset turns' to regenerate the export first.")
+        return "\n".join(lines)
+
+    for record in records:
+        input_payload = safe_dict(record.get("input"))
+        deterministic = safe_dict(record.get("deterministic"))
+        selected_route = safe_dict(record.get("selected_route"))
+        training_use = safe_dict(record.get("training_use"))
+        feedback = safe_dict(record.get("feedback"))
+
+        lines.append("")
+        lines.append(f"dataset_id: {record.get('dataset_id')}")
+        lines.append(f"turn_id: {record.get('turn_id')}")
+        lines.append(
+            "input: "
+            f"{input_payload.get('normalized') or input_payload.get('original')}"
+        )
+        lines.append(f"deterministic_intent: {deterministic.get('intent')}")
+        lines.append(f"selected_route_source: {selected_route.get('source')}")
+        lines.append(f"selected_intent: {selected_route.get('intent')}")
+        lines.append(
+            "training_include: "
+            f"{'yes' if training_use.get('include') is True else 'no'}"
+        )
+        lines.append(f"training_category: {training_use.get('category')}")
+        lines.append(f"feedback_label: {feedback.get('label')}")
+        lines.append(f"feedback_note: {feedback.get('note')}")
+
+    return "\n".join(lines)
+
+
 def format_conversational_turn_dataset_export_report(result: dict[str, Any]) -> str:
     """
     Build a plain-text report for conversational turn dataset exports.
