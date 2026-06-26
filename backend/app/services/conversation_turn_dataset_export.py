@@ -352,7 +352,9 @@ def summarize_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
     Summarize dataset category counts.
     """
     category_counts: dict[str, int] = {}
+    feedback_label_counts: dict[str, int] = {}
     included_count = 0
+    feedback_count = 0
 
     for record in records:
         training_use = safe_dict(record.get("training_use"))
@@ -361,6 +363,15 @@ def summarize_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
 
         if training_use.get("include") is True:
             included_count += 1
+
+        feedback = safe_dict(record.get("feedback"))
+        feedback_label = feedback.get("label")
+
+        if isinstance(feedback_label, str) and feedback_label:
+            feedback_count += 1
+            feedback_label_counts[feedback_label] = (
+                feedback_label_counts.get(feedback_label, 0) + 1
+            )
 
     review_needed = category_counts.get(CATEGORY_SAFETY_REVIEW, 0)
     review_needed += category_counts.get(CATEGORY_CONTRACT_REJECTION_TURN, 0)
@@ -371,7 +382,9 @@ def summarize_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
         "included_examples": included_count,
         "review_needed_examples": review_needed,
         "unlabeled_examples": category_counts.get(CATEGORY_UNLABELED_TURN, 0),
+        "feedback_examples": feedback_count,
         "category_counts": category_counts,
+        "feedback_label_counts": feedback_label_counts,
     }
 
 
@@ -417,7 +430,9 @@ def export_conversational_turn_dataset(
                 "included_examples": 0,
                 "review_needed_examples": 0,
                 "unlabeled_examples": 0,
+                "feedback_examples": 0,
                 "category_counts": {},
+                "feedback_label_counts": {},
             },
             "errors": [str(error)],
             "warnings": [],
@@ -430,6 +445,7 @@ def format_conversational_turn_dataset_export_report(result: dict[str, Any]) -> 
     """
     data = result.get("data", {})
     category_counts = data.get("category_counts", {})
+    feedback_label_counts = data.get("feedback_label_counts", {})
 
     lines = [
         "LIGHTHOUSE CONVERSATIONAL TURN DATASET EXPORT",
@@ -440,6 +456,7 @@ def format_conversational_turn_dataset_export_report(result: dict[str, Any]) -> 
         f"Included examples: {data.get('included_examples', 0)}",
         f"Review-needed examples: {data.get('review_needed_examples', 0)}",
         f"Unlabeled examples: {data.get('unlabeled_examples', 0)}",
+        f"Feedback examples: {data.get('feedback_examples', 0)}",
         f"Output: {data.get('output_path')}",
     ]
 
@@ -448,6 +465,12 @@ def format_conversational_turn_dataset_export_report(result: dict[str, Any]) -> 
 
         for category, count in sorted(category_counts.items()):
             lines.append(f"- {category}: {count}")
+
+    if feedback_label_counts:
+        lines.append("Feedback labels:")
+
+        for label, count in sorted(feedback_label_counts.items()):
+            lines.append(f"- {label}: {count}")
 
     errors = result.get("errors", [])
 
