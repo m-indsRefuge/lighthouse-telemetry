@@ -201,7 +201,8 @@ to the append-only turn journal. It does not execute tools.
 `turns` reviews recent conversational engine turns.
 
 `turn feedback <turn_id> <label> [note]` records append-only Operator feedback
-against a specific turn id.
+against a specific turn id. The turn id must exist in the conversational turn
+journal.
 
 `turn feedback latest <label> [note]` records feedback against the most recent
 turn, avoiding manual copy/paste of the turn id during quick smoke tests.
