@@ -155,3 +155,92 @@ def test_conversation_turn_feedbacks_alias_prints_recent_feedback(monkeypatch, c
 
     assert result == "handled"
     assert "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK" in output
+
+def test_turn_feedback_latest_command_records_feedback_for_latest_turn(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls = {}
+
+    monkeypatch.setattr(
+        cli,
+        "read_conversational_engine_turns",
+        lambda limit=1: [{"turn_id": "turn-latest"}],
+    )
+
+    def fake_record(*, turn_id: str, label: str, note: str = ""):
+        calls["turn_id"] = turn_id
+        calls["label"] = label
+        calls["note"] = note
+        return {
+            "status": "ok",
+            "message": "Conversational turn feedback recorded.",
+            "data": {
+                "saved": True,
+                "turn_id": turn_id,
+                "feedback_id": "turnfb-latest",
+                "label": label,
+            },
+            "errors": [],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(cli, "record_turn_feedback", fake_record)
+    monkeypatch.setattr(
+        cli,
+        "format_turn_feedback_result",
+        lambda result: "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK",
+    )
+
+    result = cli.run_canonical_command(
+        "turn feedback latest useful routed correctly"
+    )
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert calls == {
+        "turn_id": "turn-latest",
+        "label": "useful",
+        "note": "routed correctly",
+    }
+    assert "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK" in output
+
+
+def test_turn_feedback_latest_command_handles_missing_turns(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "read_conversational_engine_turns",
+        lambda limit=1: [],
+    )
+
+    result = cli.run_canonical_command("turn feedback latest useful checked")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK" in output
+    assert "Status: invalid" in output
+    assert "No conversational engine turns recorded yet." in output
+    assert "Saved: no" in output
+
+
+def test_turn_feedback_literal_placeholder_is_rejected(
+    monkeypatch,
+    capsys,
+) -> None:
+    def fail_record(*, turn_id: str, label: str, note: str = ""):
+        raise AssertionError("record_turn_feedback should not be called")
+
+    monkeypatch.setattr(cli, "record_turn_feedback", fail_record)
+
+    result = cli.run_canonical_command(
+        "turn feedback <turn_id> useful routed correctly"
+    )
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "Usage: turn feedback <turn_id> <label> [note]" in output
+    assert "Do not include angle brackets." in output
+    assert "turn feedback latest <label> [note]" in output

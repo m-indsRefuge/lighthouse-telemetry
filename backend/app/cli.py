@@ -72,6 +72,7 @@ from app.services.conversational_engine_turn import (
     build_conversational_engine_turn,
     format_conversational_engine_turn_report,
     format_conversational_engine_turns_report,
+    read_conversational_engine_turns,
 )
 from app.services.llm_preview_feedback import (
     format_llm_preview_feedback_result,
@@ -161,6 +162,7 @@ def print_help() -> None:
     print("turn feedback labels Show valid conversational turn feedback labels")
     print("turn feedbacks Show recent conversational turn feedback records")
     print("turn feedback <turn_id> <label> [note] Save feedback for a turn")
+    print("turn feedback latest <label> [note] Save feedback for the latest turn")
     print("llm previews Show recent LLM route preview journal entries")
     print("llm preview feedback labels Show valid LLM preview feedback labels")
     print("llm preview feedback <preview_id> <label> [note] Save feedback for an LLM preview")
@@ -190,6 +192,7 @@ def print_help() -> None:
     print("- turn feedback labels")
     print("- turn feedbacks")
     print("- turn feedback turn-example useful routed correctly")
+    print("- turn feedback latest useful routed correctly")
     print("- llm previews")
     print("- llm preview feedback labels")
     print("- llm preview feedback llmprev-example useful routed correctly")
@@ -1627,6 +1630,48 @@ def print_turn_feedback_report(turn_id: str, label: str, note: str = "") -> None
     print(format_turn_feedback_result(result))
 
 
+def is_placeholder_turn_id(turn_id: str) -> bool:
+    """
+    Return true when the Operator entered an example placeholder, not a real id.
+    """
+    return turn_id.strip().lower() in {"<turn_id>", "turn_id"}
+
+
+def resolve_latest_conversational_turn_id() -> str | None:
+    """
+    Return the most recent conversational turn id, if one exists.
+    """
+    turns = read_conversational_engine_turns(limit=1)
+
+    if not turns:
+        return None
+
+    turn_id = turns[0].get("turn_id")
+
+    if isinstance(turn_id, str) and turn_id:
+        return turn_id
+
+    return None
+
+
+def print_turn_feedback_latest_report(label: str, note: str = "") -> None:
+    """
+    Record and print feedback for the latest conversational turn.
+    """
+    turn_id = resolve_latest_conversational_turn_id()
+
+    if turn_id is None:
+        print("LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK")
+        print("-" * 52)
+        print("Status: invalid")
+        print("Message: No conversational engine turns recorded yet.")
+        print("Saved: no")
+        print("Run 'turn <request>' first, then try 'turn feedback latest <label> [note]'.")
+        return
+
+    print_turn_feedback_report(turn_id, label, note)
+
+
 def print_trace_id_from_journal_result(journal_result: dict[str, Any]) -> None:
     """
     Print a trace id when a journal write succeeds.
@@ -1790,6 +1835,62 @@ def run_canonical_command(command: str) -> str:
         print("Use 'turn feedback labels' to list valid labels.")
         return "handled"
 
+    if normalized_command in {
+        "turn feedback latest",
+        "conversation turn feedback latest",
+        "conversational turn feedback latest",
+    }:
+        print("Usage: turn feedback latest <label> [note]")
+        print("Use 'turn feedback labels' to list valid labels.")
+        return "handled"
+
+    if normalized_command.startswith("turn feedback latest "):
+        feedback_text = cleaned_command[len("turn feedback latest "):].strip()
+        parts = feedback_text.split(maxsplit=1)
+
+        if not parts:
+            print("Usage: turn feedback latest <label> [note]")
+            print("Use 'turn feedback labels' to list valid labels.")
+            return "handled"
+
+        label = parts[0]
+        note = parts[1] if len(parts) > 1 else ""
+
+        print_turn_feedback_latest_report(label, note)
+        return "handled"
+
+    if normalized_command.startswith("conversation turn feedback latest "):
+        feedback_text = cleaned_command[len("conversation turn feedback latest "):].strip()
+        parts = feedback_text.split(maxsplit=1)
+
+        if not parts:
+            print("Usage: turn feedback latest <label> [note]")
+            print("Use 'turn feedback labels' to list valid labels.")
+            return "handled"
+
+        label = parts[0]
+        note = parts[1] if len(parts) > 1 else ""
+
+        print_turn_feedback_latest_report(label, note)
+        return "handled"
+
+    if normalized_command.startswith("conversational turn feedback latest "):
+        feedback_text = cleaned_command[
+            len("conversational turn feedback latest "):
+        ].strip()
+        parts = feedback_text.split(maxsplit=1)
+
+        if not parts:
+            print("Usage: turn feedback latest <label> [note]")
+            print("Use 'turn feedback labels' to list valid labels.")
+            return "handled"
+
+        label = parts[0]
+        note = parts[1] if len(parts) > 1 else ""
+
+        print_turn_feedback_latest_report(label, note)
+        return "handled"
+
     if normalized_command.startswith("turn feedback "):
         feedback_text = cleaned_command[len("turn feedback "):].strip()
         parts = feedback_text.split(maxsplit=2)
@@ -1802,6 +1903,12 @@ def run_canonical_command(command: str) -> str:
         turn_id = parts[0]
         label = parts[1]
         note = parts[2] if len(parts) > 2 else ""
+
+        if is_placeholder_turn_id(turn_id):
+            print("Usage: turn feedback <turn_id> <label> [note]")
+            print("Do not include angle brackets. Use a real turn id from 'turns'.")
+            print("Or use: turn feedback latest <label> [note]")
+            return "handled"
 
         print_turn_feedback_report(turn_id, label, note)
         return "handled"
