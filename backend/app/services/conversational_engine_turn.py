@@ -568,6 +568,10 @@ def format_conversational_engine_turns_report(
     """
     turns = read_conversational_engine_turns(limit=limit, memory_dir=memory_dir)
 
+    from app.services.conversation_turn_feedback import latest_feedback_by_turn_id
+
+    feedback_by_turn_id = latest_feedback_by_turn_id(memory_dir=memory_dir)
+
     lines = [
         "LIGHTHOUSE CONVERSATIONAL ENGINE TURNS",
         "-" * 52,
@@ -579,11 +583,17 @@ def format_conversational_engine_turns_report(
         return "\n".join(lines)
 
     for record in turns:
+        turn_id = record.get("turn_id")
         deterministic = record.get("deterministic_result", {})
         llm_route = record.get("llm_route_result", {})
         selected_handoff = record.get("selected_route_handoff", {})
         autorun_gate = record.get("autorun_gate", {})
         safety = record.get("safety", {})
+        feedback = (
+            feedback_by_turn_id.get(turn_id)
+            if isinstance(turn_id, str)
+            else None
+        )
 
         if not isinstance(deterministic, dict):
             deterministic = {}
@@ -595,6 +605,8 @@ def format_conversational_engine_turns_report(
             autorun_gate = {}
         if not isinstance(safety, dict):
             safety = {}
+        if not isinstance(feedback, dict):
+            feedback = {}
 
         lines.append("")
         lines.append(f"turn_id: {record.get('turn_id')}")
@@ -614,6 +626,8 @@ def format_conversational_engine_turns_report(
             "autorun_gate_allowed: "
             f"{'yes' if autorun_gate.get('allowed') else 'no'}"
         )
+        lines.append(f"feedback_label: {feedback.get('label')}")
+        lines.append(f"feedback_note: {feedback.get('note')}")
         lines.append(f"executed: {'yes' if safety.get('executed') else 'no'}")
         lines.append(
             "preview_only: "
