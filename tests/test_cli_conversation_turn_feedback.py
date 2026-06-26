@@ -112,3 +112,46 @@ def test_turn_feedback_usage_does_not_route_to_turn_preview(capsys) -> None:
     assert result == "handled"
     assert "Usage: turn feedback <turn_id> <label> [note]" in output
     assert "LIGHTHOUSE CONVERSATIONAL ENGINE TURN" not in output
+
+
+def test_turn_feedbacks_command_prints_recent_feedback(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "format_turn_feedback_report",
+        lambda limit=10: "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK\nShown: 1",
+    )
+
+    result = cli.run_canonical_command("turn feedbacks")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK" in output
+    assert "Shown: 1" in output
+
+
+def test_turn_feedback_journal_alias_prints_recent_feedback(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "format_turn_feedback_report",
+        lambda limit=10: "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK JOURNAL",
+    )
+
+    result = cli.run_canonical_command("turn feedback journal")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK JOURNAL" in output
+
+
+def test_conversation_turn_feedbacks_alias_prints_recent_feedback(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli,
+        "format_turn_feedback_report",
+        lambda limit=10: "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK",
+    )
+
+    result = cli.run_canonical_command("conversation turn feedbacks")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK" in output

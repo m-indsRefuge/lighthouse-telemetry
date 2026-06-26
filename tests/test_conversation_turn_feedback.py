@@ -105,3 +105,39 @@ def test_format_turn_feedback_result() -> None:
     assert "Turn ID: turn-example" in report
     assert "Saved: yes" in report
     assert "Label: useful" in report
+
+
+def test_format_turn_feedback_report_lists_recent_records(tmp_path: Path) -> None:
+    record_turn_feedback(
+        turn_id="turn-one",
+        label="useful",
+        note="first note",
+        memory_dir=tmp_path,
+    )
+    record_turn_feedback(
+        turn_id="turn-two",
+        label="wrong_route",
+        note="second note",
+        memory_dir=tmp_path,
+    )
+
+    from app.services.conversation_turn_feedback import format_turn_feedback_report
+
+    report = format_turn_feedback_report(memory_dir=tmp_path)
+
+    assert "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK" in report
+    assert "Shown: 2" in report
+    assert "turn_id: turn-two" in report
+    assert "label: wrong_route" in report
+    assert "note: second note" in report
+    assert "turn_id: turn-one" in report
+
+
+def test_format_turn_feedback_report_handles_empty_journal(tmp_path: Path) -> None:
+    from app.services.conversation_turn_feedback import format_turn_feedback_report
+
+    report = format_turn_feedback_report(memory_dir=tmp_path)
+
+    assert "LIGHTHOUSE CONVERSATIONAL TURN FEEDBACK" in report
+    assert "Shown: 0" in report
+    assert "No conversational turn feedback recorded yet." in report

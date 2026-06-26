@@ -235,3 +235,21 @@ model, mutate the operating system, or change the turn journal.
     help
     quit
     ```
+
+## Conversational turn feedback review
+
+```text
+turn feedback labels
+turn feedbacks
+turn feedback journal
+turn feedback <turn_id> <label> [note]
+conversation turn feedback <turn_id> <label> [note]
+conversational turn feedback <turn_id> <label> [note]
+```
+
+Lists conversational turn feedback labels, reviews recent turn feedback records,
+and records feedback for a full conversational engine turn. Feedback is appended
+as a later human judgment and is joined into `dataset turns`.
+
+The review commands show the append-only feedback journal without changing it.
+
