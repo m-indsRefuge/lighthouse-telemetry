@@ -184,6 +184,32 @@
 
     Lists LLM preview feedback labels and records feedback for a preview.
 
+
+## Conversational turns
+
+```text
+turn <text>
+turns
+turn feedback labels
+turn feedback <turn_id> <label> [note]
+turn feedback latest <label> [note]
+```
+
+`turn <text>` builds a preview-only conversational engine turn and records it
+to the append-only turn journal. It does not execute tools.
+
+`turns` reviews recent conversational engine turns.
+
+`turn feedback <turn_id> <label> [note]` records append-only Operator feedback
+against a specific turn id.
+
+`turn feedback latest <label> [note]` records feedback against the most recent
+turn, avoiding manual copy/paste of the turn id during quick smoke tests.
+
+Turn feedback is observational. It does not rewrite turn records, execute tools,
+call a model, mutate the operating system, or override deterministic route,
+tool, or autorun authority.
+
     ## Dataset export
 
     ```text
