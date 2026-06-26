@@ -147,3 +147,51 @@ def test_format_conversational_turn_dataset_export_report(tmp_path: Path) -> Non
     assert "Examples exported: 1" in report
     assert "Included examples: 1" in report
     assert "Output:" in report
+
+
+def test_dataset_includes_latest_turn_feedback(tmp_path: Path) -> None:
+    turn_result = build_conversational_engine_turn(
+        "why is chrome eating memory",
+        memory_dir=tmp_path,
+    )
+    assert turn_result.turn_journal_result is not None
+    turn_id = turn_result.turn_journal_result["data"]["turn_id"]
+
+    from app.services.conversation_turn_feedback import record_turn_feedback
+
+    record_turn_feedback(
+        turn_id=turn_id,
+        label="useful",
+        note="good route",
+        memory_dir=tmp_path,
+    )
+
+    record = build_conversational_turn_dataset(memory_dir=tmp_path)[0]
+
+    assert record["feedback"]["label"] == "useful"
+    assert record["feedback"]["note"] == "good route"
+    assert record["feedback"]["feedback_id"].startswith("turnfb-")
+
+
+def test_dataset_feedback_label_can_mark_turn_for_correction(tmp_path: Path) -> None:
+    turn_result = build_conversational_engine_turn(
+        "why is chrome eating memory",
+        memory_dir=tmp_path,
+    )
+    assert turn_result.turn_journal_result is not None
+    turn_id = turn_result.turn_journal_result["data"]["turn_id"]
+
+    from app.services.conversation_turn_feedback import record_turn_feedback
+
+    record_turn_feedback(
+        turn_id=turn_id,
+        label="wrong_route",
+        note="should route differently",
+        memory_dir=tmp_path,
+    )
+
+    record = build_conversational_turn_dataset(memory_dir=tmp_path)[0]
+
+    assert record["feedback"]["label"] == "wrong_route"
+    assert record["training_use"]["include"] is False
+    assert record["training_use"]["category"] == "correction_needed"
