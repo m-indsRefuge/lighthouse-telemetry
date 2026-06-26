@@ -44,6 +44,7 @@ from app.services.llm_preview_dataset_export import (
 from app.services.conversation_turn_dataset_export import (
     export_conversational_turn_dataset,
     format_conversational_turn_dataset_export_report,
+    format_conversational_turn_dataset_review_report,
 )
 from app.services.operator_routes import (
     build_operator_routes_report,
@@ -145,6 +146,7 @@ def print_help() -> None:
     print("dataset operator Export Operator route dataset")
     print("dataset llm preview Export LLM preview route dataset")
     print("dataset turns Export conversational turn dataset")
+    print("dataset turns review Review exported conversational turn dataset rows")
     print("journal     Show recent Lighthouse action journal entries")
     print("ask         Ask Lighthouse a plain-English question")
     print("model       Show local Ollama model status")
@@ -1657,6 +1659,13 @@ def print_conversational_turn_dataset_export_report() -> None:
     print(format_conversational_turn_dataset_export_report(result))
 
 
+def print_conversational_turn_dataset_review_report(limit: int = 10) -> None:
+    """
+    Print recent rows from the exported conversational turn dataset.
+    """
+    print(format_conversational_turn_dataset_review_report(limit=limit))
+
+
 def print_conversational_engine_turns_report(
     *,
     limit: int = 10,
@@ -1853,6 +1862,41 @@ def run_canonical_command(command: str) -> str:
         "dataset export llm preview",
     }:
         print_llm_preview_dataset_export_report()
+        return "handled"
+
+    if normalized_command in {
+        "dataset turns review",
+        "dataset turn review",
+        "dataset turns rows",
+        "dataset turn rows",
+        "conversation turn dataset review",
+        "conversational turn dataset review",
+    }:
+        print_conversational_turn_dataset_review_report()
+        return "handled"
+
+    if normalized_command.startswith("dataset turns review "):
+        limit_text = cleaned_command[len("dataset turns review "):].strip()
+
+        try:
+            limit = int(limit_text)
+        except ValueError:
+            print("Usage: dataset turns review <limit>")
+            return "handled"
+
+        print_conversational_turn_dataset_review_report(limit=limit)
+        return "handled"
+
+    if normalized_command.startswith("dataset turns rows "):
+        limit_text = cleaned_command[len("dataset turns rows "):].strip()
+
+        try:
+            limit = int(limit_text)
+        except ValueError:
+            print("Usage: dataset turns rows <limit>")
+            return "handled"
+
+        print_conversational_turn_dataset_review_report(limit=limit)
         return "handled"
 
     if normalized_command in {

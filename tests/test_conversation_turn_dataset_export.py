@@ -262,3 +262,81 @@ def test_dataset_export_report_shows_feedback_summary(tmp_path: Path) -> None:
     assert "Feedback examples: 1" in report
     assert "Feedback labels:" in report
     assert "- useful: 1" in report
+
+
+def test_read_conversational_turn_dataset_records_reads_export_newest_first(
+    tmp_path: Path,
+) -> None:
+    build_conversational_engine_turn(
+        "why is my laptop slow",
+        memory_dir=tmp_path,
+    )
+    build_conversational_engine_turn(
+        "why is chrome eating memory",
+        memory_dir=tmp_path,
+    )
+    export_conversational_turn_dataset(memory_dir=tmp_path)
+
+    from app.services.conversation_turn_dataset_export import (
+        read_conversational_turn_dataset_records,
+    )
+
+    records = read_conversational_turn_dataset_records(
+        memory_dir=tmp_path,
+        limit=1,
+    )
+
+    assert len(records) == 1
+    assert records[0]["input"]["normalized"] == "why is chrome eating memory"
+
+
+def test_format_conversational_turn_dataset_review_report_shows_rows(
+    tmp_path: Path,
+) -> None:
+    turn_result = build_conversational_engine_turn(
+        "why is my laptop slow",
+        memory_dir=tmp_path,
+    )
+    assert turn_result.turn_journal_result is not None
+    turn_id = turn_result.turn_journal_result["data"]["turn_id"]
+
+    from app.services.conversation_turn_feedback import record_turn_feedback
+    from app.services.conversation_turn_dataset_export import (
+        format_conversational_turn_dataset_review_report,
+    )
+
+    record_turn_feedback(
+        turn_id=turn_id,
+        label="useful",
+        note="good route",
+        memory_dir=tmp_path,
+    )
+    export_conversational_turn_dataset(memory_dir=tmp_path)
+
+    report = format_conversational_turn_dataset_review_report(memory_dir=tmp_path)
+
+    assert "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW" in report
+    assert "Shown: 1" in report
+    assert f"turn_id: {turn_id}" in report
+    assert "input: why is my laptop slow" in report
+    assert "deterministic_intent: performance_diagnostic" in report
+    assert "selected_route_source: deterministic" in report
+    assert "training_include: yes" in report
+    assert "training_category: deterministic_fallback_turn" in report
+    assert "feedback_label: useful" in report
+    assert "feedback_note: good route" in report
+
+
+def test_format_conversational_turn_dataset_review_report_handles_missing_export(
+    tmp_path: Path,
+) -> None:
+    from app.services.conversation_turn_dataset_export import (
+        format_conversational_turn_dataset_review_report,
+    )
+
+    report = format_conversational_turn_dataset_review_report(memory_dir=tmp_path)
+
+    assert "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW" in report
+    assert "Shown: 0" in report
+    assert "No conversational turn dataset rows found." in report
+    assert "Run 'dataset turns' to regenerate the export first." in report

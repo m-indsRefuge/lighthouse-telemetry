@@ -253,3 +253,18 @@ as a later human judgment and is joined into `dataset turns`.
 
 The review commands show the append-only feedback journal without changing it.
 
+## Conversational turn dataset review
+
+```text
+dataset turns review
+dataset turns rows
+dataset turns review <limit>
+conversation turn dataset review
+conversational turn dataset review
+```
+
+Reviews rows from the current exported conversational turn dataset artifact.
+This does not regenerate the dataset, call a model, execute tools, mutate the
+operating system, or rewrite journals. Run `dataset turns` first when the export
+is missing or stale.
+
