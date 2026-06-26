@@ -38,6 +38,22 @@ CATEGORY_SAFETY_REVIEW = "safety_review"
 CATEGORY_CORRECTION_NEEDED = "correction_needed"
 CATEGORY_UNLABELED_TURN = "unlabeled_turn"
 
+DATASET_REVIEW_FILTER_ALL = "all"
+DATASET_REVIEW_FILTER_INCLUDED = "included"
+DATASET_REVIEW_FILTER_EXCLUDED = "excluded"
+DATASET_REVIEW_FILTER_FEEDBACK = "feedback"
+DATASET_REVIEW_FILTER_CORRECTIONS = "corrections"
+DATASET_REVIEW_FILTER_REVIEW_NEEDED = "review_needed"
+DATASET_REVIEW_FILTER_CATEGORY = "category"
+
+REVIEW_NEEDED_CATEGORIES = frozenset(
+    {
+        CATEGORY_SAFETY_REVIEW,
+        CATEGORY_CONTRACT_REJECTION_TURN,
+        CATEGORY_CORRECTION_NEEDED,
+    }
+)
+
 POSITIVE_FEEDBACK_LABELS = frozenset({"useful"})
 CORRECTION_FEEDBACK_LABELS = frozenset(
     {"not_useful", "wrong_intent", "wrong_route", "confusing", "corrected"}
@@ -439,11 +455,84 @@ def export_conversational_turn_dataset(
         }
 
 
+def filter_conversational_turn_dataset_records(
+    records: list[dict[str, Any]],
+    *,
+    filter_mode: str = DATASET_REVIEW_FILTER_ALL,
+    category: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Filter exported conversational turn dataset rows for review.
+
+    This is read-only and operates on already-built dataset records.
+    """
+    normalized_filter = (filter_mode or DATASET_REVIEW_FILTER_ALL).strip().lower()
+
+    if normalized_filter == DATASET_REVIEW_FILTER_ALL:
+        return list(records)
+
+    filtered: list[dict[str, Any]] = []
+
+    for record in records:
+        training_use = safe_dict(record.get("training_use"))
+        feedback = safe_dict(record.get("feedback"))
+        training_category = training_use.get("category")
+        feedback_label = feedback.get("label")
+
+        if (
+            normalized_filter == DATASET_REVIEW_FILTER_INCLUDED
+            and training_use.get("include") is True
+        ):
+            filtered.append(record)
+            continue
+
+        if (
+            normalized_filter == DATASET_REVIEW_FILTER_EXCLUDED
+            and training_use.get("include") is False
+        ):
+            filtered.append(record)
+            continue
+
+        if (
+            normalized_filter == DATASET_REVIEW_FILTER_FEEDBACK
+            and isinstance(feedback_label, str)
+            and feedback_label
+        ):
+            filtered.append(record)
+            continue
+
+        if normalized_filter == DATASET_REVIEW_FILTER_CORRECTIONS and (
+            training_category == CATEGORY_CORRECTION_NEEDED
+            or feedback_label in CORRECTION_FEEDBACK_LABELS
+        ):
+            filtered.append(record)
+            continue
+
+        if (
+            normalized_filter == DATASET_REVIEW_FILTER_REVIEW_NEEDED
+            and training_category in REVIEW_NEEDED_CATEGORIES
+        ):
+            filtered.append(record)
+            continue
+
+        if (
+            normalized_filter == DATASET_REVIEW_FILTER_CATEGORY
+            and category
+            and training_category == category
+        ):
+            filtered.append(record)
+            continue
+
+    return filtered
+
+
 def read_conversational_turn_dataset_records(
     *,
     memory_dir: str | Path | None = None,
     dataset_path: str | Path | None = None,
     limit: int = 10,
+    filter_mode: str = DATASET_REVIEW_FILTER_ALL,
+    category: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Read recent exported conversational turn dataset rows, newest first.
@@ -459,8 +548,14 @@ def read_conversational_turn_dataset_records(
         else default_dataset_path(memory_dir)
     )
 
-    records = read_jsonl(resolved_path)
-    return list(reversed(records))[:limit]
+    records = list(reversed(read_jsonl(resolved_path)))
+    filtered_records = filter_conversational_turn_dataset_records(
+        records,
+        filter_mode=filter_mode,
+        category=category,
+    )
+
+    return filtered_records[:limit]
 
 
 def format_conversational_turn_dataset_review_report(
@@ -468,6 +563,8 @@ def format_conversational_turn_dataset_review_report(
     memory_dir: str | Path | None = None,
     dataset_path: str | Path | None = None,
     limit: int = 10,
+    filter_mode: str = DATASET_REVIEW_FILTER_ALL,
+    category: str | None = None,
 ) -> str:
     """
     Build a plain-text review report for exported conversational turn dataset rows.
@@ -481,14 +578,21 @@ def format_conversational_turn_dataset_review_report(
         memory_dir=memory_dir,
         dataset_path=dataset_path,
         limit=limit,
+        filter_mode=filter_mode,
+        category=category,
     )
 
     lines = [
         "LIGHTHOUSE CONVERSATIONAL TURN DATASET REVIEW",
         "-" * 52,
         f"Shown: {len(records)}",
-        f"Source: {resolved_path}",
+        f"Filter: {filter_mode}",
     ]
+
+    if filter_mode == DATASET_REVIEW_FILTER_CATEGORY:
+        lines.append(f"Category: {category}")
+
+    lines.append(f"Source: {resolved_path}")
 
     if not records:
         lines.append("No conversational turn dataset rows found.")
