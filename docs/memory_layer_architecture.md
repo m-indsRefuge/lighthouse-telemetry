@@ -51,6 +51,37 @@ future semantic indexes
 
 Each part has a different role.
 
+## Operational evidence and curated memory
+
+Lighthouse maintains two deliberately separate local stores:
+
+```text
+memory/
+    append-only operational evidence: journals, feedback, and regenerated datasets
+
+data/memory/
+    curated deterministic Lighthouse memory: structured cases, baselines,
+    preferences, and knowledge entries
+```
+
+`memory/` records what the system observed or previewed. `data/memory/` is the
+controlled store consumed by deterministic memory retrieval and management.
+Operational evidence is not automatically promoted into curated memory.
+
+V1.5 C01 introduces a read-only candidate preview between those stores:
+
+```text
+conversation turn journal + latest Operator feedback + deterministic route/gate evidence
+    -> CaseMemoryCandidate preview
+    -> deterministic provenance validation
+    -> proposed structured CaseMemory validation
+    -> Operator preview only
+```
+
+C01 does not write `data/memory/`, modify `memory/`, migrate either directory,
+call a model, execute a tool, or mutate the operating system. Operator approval
+is required before any future promotion work can be considered.
+
 ## Append-only journals
 
 Journals are the closest thing V1 has to source-of-truth operational memory.
@@ -384,6 +415,7 @@ Review recent operational records:
 interactions
 llm previews
 turns
+case preview <turn_id>
 journal
 ```
 
@@ -407,6 +439,7 @@ The expected workflow is:
 ```text
 run preview or diagnostic path
 review journal/turn records
+preview a deterministic case candidate for an exact turn id
 add feedback when useful
 export dataset snapshot
 inspect dataset

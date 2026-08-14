@@ -9,8 +9,8 @@ If one of these assertions fails, treat it as a contract-change review,
 not as a casual refactor failure.
 """
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_PATH = PROJECT_ROOT / "backend"
@@ -18,6 +18,11 @@ BACKEND_PATH = PROJECT_ROOT / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
+from app.services.case_memory_candidate import (
+    CASE_MEMORY_CANDIDATE_SCHEMA_VERSION,
+    CaseMemoryCandidate,
+    CaseMemoryCandidateValidation,
+)
 from app.services.engine_memory_context import EngineMemoryContext
 from app.services.lighthouse_engine import LighthouseEngineResult
 from app.services.llm_contract import LLMContractValidationResult
@@ -120,6 +125,45 @@ def sample_engine_memory_context() -> EngineMemoryContext:
         summary=None,
         warnings=(),
         errors=(),
+    )
+
+
+def sample_case_memory_candidate() -> CaseMemoryCandidate:
+    return CaseMemoryCandidate(
+        schema_version=CASE_MEMORY_CANDIDATE_SCHEMA_VERSION,
+        candidate_id="case_candidate_example",
+        source_turn_id="turn-example",
+        source_turn_created_at="2026-08-13T08:00:00+00:00",
+        provenance={
+            "turn_journal": {"turn_id": "turn-example"},
+            "operator_feedback": {"present": False, "record": None},
+            "route": {"selected_source": "deterministic"},
+            "autorun_gate": {"allowed": True},
+            "turn_safety_envelope": {"preview_only": True},
+            "dataset_classification": {"category": "safe_preview_turn"},
+            "model_proposal": {
+                "present": False,
+                "role": "proposal_only",
+                "authority": False,
+                "record": None,
+            },
+        },
+        proposed_case={"status": "unresolved"},
+        validation=CaseMemoryCandidateValidation(
+            provenance_valid=True,
+            case_valid=True,
+        ),
+        promotion={
+            "preview_only": True,
+            "persisted": False,
+            "operator_approval_required": True,
+        },
+        safety={
+            "model_authority": False,
+            "tool_execution": False,
+            "os_mutation": False,
+            "memory_write": False,
+        },
     )
 
 
@@ -344,6 +388,32 @@ def test_llm_conversation_preview_result_shape_is_frozen() -> None:
     assert result["executed"] is False
 
 
+def test_case_memory_candidate_contract_shape_is_frozen() -> None:
+    result = sample_case_memory_candidate().to_dict()
+
+    assert_keys_exact(
+        result,
+        [
+            "schema_version",
+            "candidate_id",
+            "source_turn_id",
+            "source_turn_created_at",
+            "provenance",
+            "proposed_case",
+            "validation",
+            "promotion",
+            "safety",
+        ],
+    )
+    assert_keys_exact(
+        result["validation"],
+        ["provenance_valid", "case_valid", "errors", "warnings"],
+    )
+    assert result["promotion"]["preview_only"] is True
+    assert result["promotion"]["persisted"] is False
+    assert result["safety"]["memory_write"] is False
+
+
 def test_lighthouse_engine_result_contract_shape_is_frozen() -> None:
     result = LighthouseEngineResult(
         status="ok",
@@ -400,6 +470,7 @@ def test_frozen_contract_shapes_are_json_serializable() -> None:
         sample_llm_contract_validation().to_dict(),
         sample_llm_route_call().to_dict(),
         sample_engine_memory_context().to_dict(),
+        sample_case_memory_candidate().to_dict(),
     ]
 
     for payload in objects:
