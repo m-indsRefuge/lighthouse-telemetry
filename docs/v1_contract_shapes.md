@@ -22,6 +22,7 @@ LLMContractValidationResult
 LLMRouteCallResult
 LLMConversationPreviewResult
 ConversationalEngineTurnResult
+CaseMemoryCandidate (V1.5 C01 preview-only extension)
 LighthouseEngineResult
 ```
 
@@ -188,6 +189,54 @@ autorun_gate
 turn_journal_result
 executed
 ```
+
+### CaseMemoryCandidate (V1.5 C01)
+
+This immutable internal preview contract is distinct from the generic
+`MemoryCandidate`. It represents a deterministic, Operator-visible proposal to
+promote one exact operational conversational turn into a structured case. It is
+not a persistence, approval, or execution contract.
+
+```text
+schema_version
+candidate_id
+source_turn_id
+source_turn_created_at
+provenance
+proposed_case
+validation
+promotion
+safety
+```
+
+`candidate_id` is deterministically derived from the candidate schema version
+and source turn id. Its provenance includes the turn journal, latest Operator
+feedback when present, deterministic route evidence, autorun-gate evidence,
+recomputed conversational-turn dataset classification, and separately labelled
+model proposal material. Model proposal material has no authority.
+
+```text
+validation
+  provenance_valid
+  case_valid
+  errors
+  warnings
+
+promotion
+  preview_only = true
+  persisted = false
+  operator_approval_required = true
+
+safety
+  model_authority = false
+  tool_execution = false
+  os_mutation = false
+  memory_write = false
+```
+
+`proposed_case` is passed through the existing `validate_case_memory()`
+machinery. An invalid candidate remains a preview with explicit validation
+errors; it is never silently repaired or written to curated memory.
 
 ### LighthouseEngineResult
 

@@ -211,6 +211,26 @@ Turn feedback is observational. It does not rewrite turn records, execute tools,
 call a model, mutate the operating system, or override deterministic route,
 tool, or autorun authority.
 
+## Case candidate preview
+
+```text
+case preview <turn_id>
+```
+
+Builds an Operator-readable, deterministic `CaseMemoryCandidate` preview from
+one exact conversational turn id. It reads the current turn journal and latest
+Operator feedback, recomputes the conversational-turn dataset classification,
+and preserves deterministic route, autorun-gate, and labelled model-proposal
+provenance.
+
+The command never substitutes the latest turn for a missing id. Missing,
+malformed, duplicate, unsafe, or structurally invalid sources are reported
+explicitly.
+
+This is preview-only: it writes no case memory, changes neither `memory/` nor
+`data/memory/`, calls no model, executes no tools, and mutates no OS state.
+Operator approval remains required for any future promotion.
+
     ## Dataset export
 
     ```text

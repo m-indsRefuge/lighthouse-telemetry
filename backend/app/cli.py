@@ -85,6 +85,10 @@ from app.services.conversation_turn_feedback import (
     format_turn_feedback_result,
     record_turn_feedback,
 )
+from app.services.case_memory_candidate import (
+    format_case_memory_candidate_preview_report,
+    preview_case_memory_candidate,
+)
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 from app.services.target_resolver import (
     TARGET_STATUS_CANDIDATE_FOUND,
@@ -163,6 +167,7 @@ def print_help() -> None:
     print("turn feedbacks Show recent conversational turn feedback records")
     print("turn feedback <turn_id> <label> [note] Save feedback for a turn")
     print("turn feedback latest <label> [note] Save feedback for the latest turn")
+    print("case preview <turn_id> Preview a deterministic case candidate without writing memory")
     print("llm previews Show recent LLM route preview journal entries")
     print("llm preview feedback labels Show valid LLM preview feedback labels")
     print("llm preview feedback <preview_id> <label> [note] Save feedback for an LLM preview")
@@ -193,6 +198,7 @@ def print_help() -> None:
     print("- turn feedbacks")
     print("- turn feedback turn-example useful routed correctly")
     print("- turn feedback latest useful routed correctly")
+    print("- case preview turn-example")
     print("- llm previews")
     print("- llm preview feedback labels")
     print("- llm preview feedback llmprev-example useful routed correctly")
@@ -1630,6 +1636,14 @@ def print_turn_feedback_report(turn_id: str, label: str, note: str = "") -> None
     print(format_turn_feedback_result(result))
 
 
+def print_case_preview_report(turn_id: str) -> None:
+    """
+    Print a read-only deterministic case-memory candidate preview.
+    """
+    result = preview_case_memory_candidate(turn_id)
+    print(format_case_memory_candidate_preview_report(result))
+
+
 def is_placeholder_turn_id(turn_id: str) -> bool:
     """
     Return true when the Operator entered an example placeholder, not a real id.
@@ -1803,6 +1817,20 @@ def run_canonical_command(command: str) -> str:
     if normalized_command.startswith("llm talk "):
         llm_talk_request = cleaned_command[len("llm talk "):].strip()
         print_llm_conversation_preview_report(llm_talk_request)
+        return "handled"
+
+    if normalized_command in {"case", "case preview"}:
+        print("Usage: case preview <turn_id>")
+        return "handled"
+
+    if normalized_command.startswith("case preview "):
+        turn_id = cleaned_command[len("case preview "):].strip()
+
+        if not turn_id:
+            print("Usage: case preview <turn_id>")
+            return "handled"
+
+        print_case_preview_report(turn_id)
         return "handled"
 
     if normalized_command in {
