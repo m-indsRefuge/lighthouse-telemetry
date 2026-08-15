@@ -4,73 +4,64 @@
 
 **Goal:** Add a fingerprint-bound, explicit-Operator-authorized, auditable, idempotent path that promotes one valid C01 case candidate into curated CaseMemory without granting persistence authority to models, journals, telemetry, or generic memory-policy trust.
 
-**Architecture:** Extend the existing C01 candidate boundary with deterministic fingerprinting, then add a dedicated `case_memory_promotion.py` service above C01 reconstruction and the existing case-memory manager/store. Promotion regenerates the candidate from authoritative journals, validates and re-fingerprints it, performs a complete-store duplicate/conflict gate, records an append-only ATTEMPT audit event, persists the exact proposed case only when authorized, then records an OUTCOME event with truthful partial-failure semantics.
+**Architecture:** Extend the existing C01 candidate boundary with deterministic fingerprinting, then add a dedicated `case_memory_promotion.py` service above C01 reconstruction and the existing case-memory manager/store. Promotion regenerates the candidate from authoritative journals, revalidates and re-fingerprints it, performs a complete-store duplicate/conflict gate, records an append-only ATTEMPT audit event, persists the exact proposed case only when authorized, and records an OUTCOME event with truthful partial-failure semantics.
 
 **Tech Stack:** Python 3.12, dataclasses, pathlib, hashlib, json, uuid, pytest, Ruff, existing Lighthouse memory services and CLI.
 
 ## Global Constraints
 
-- Base implementation on `690bf5299964f27c7c00dc33aaa3ffcd2fb1fc8c` plus the approved C02 design commits on `feature/lh-v1-5-c02-controlled-case-promotion`.
-- Existing accepted regression floor: `650 passed, 5 skipped, 0 failed`.
-- The only write-authorizing CLI command is `case approve <turn_id> <fingerprint>`.
-- Fingerprints are exactly 64 hexadecimal characters on input, case-insensitive, and normalized to lowercase internally.
-- Fingerprint payload contains exactly fingerprint version, candidate schema version, candidate id, source turn id, provenance, and proposed case.
-- Explicit fingerprint-bound Operator approval is mandatory; generic `memory_policy.py` trust never authorizes C02 promotion.
+- Implement only on `feature/lh-v1-5-c02-controlled-case-promotion`.
+- Accepted C01 regression floor: `650 passed, 5 skipped, 0 failed`.
+- Only write-authorizing CLI command: `case approve <turn_id> <fingerprint>`.
+- Fingerprint input: exactly 64 hexadecimal characters, case-insensitive; normalize to lowercase internally.
+- Fingerprint payload: fingerprint version, candidate schema version, candidate id, source turn id, provenance, proposed case — and nothing else.
+- Explicit fingerprint-bound Operator approval is mandatory; `memory_policy.py` direct-source trust cannot authorize C02 promotion.
 - C02 may write only `memory/case_promotions.jsonl` and `data/memory/cases.jsonl`.
-- No model invocation, tool execution, OS mutation, semantic deduplication, lifecycle mutation, bulk/background promotion, `approve latest`, or caller-supplied candidate persistence.
-- C02 assumes the current single-Operator local CLI model; no distributed locking or transactional database work.
-- Any implementation discovery that changes authority, storage boundaries, or scope stops the task and returns to design review.
+- No model invocation, tool execution, OS mutation, semantic deduplication, lifecycle mutation, bulk/background promotion, `approve latest`, interactive confirmation shortcut, or caller-supplied candidate persistence.
+- C02 assumes the current single-Operator local CLI model; no distributed locking or database work.
+- If implementation requires changing authority, storage boundaries, or campaign scope, stop and return to design review.
 
 ---
 
-## File Structure
+## File Map
 
-- Modify `backend/app/services/case_memory_candidate.py` — deterministic candidate fingerprinting and preview display only.
-- Create `backend/app/services/case_memory_promotion.py` — promotion result contract, audit journal, exact-approval gate, duplicate/conflict logic, persistence orchestration.
-- Modify `backend/app/services/memory_manager.py` — make duplicate preflight inspect the complete case store.
-- Modify `backend/app/cli.py` — thin `case approve` routing and report printing.
-- Modify `docs/commands.md` — document preview fingerprint and exact approval command.
-- Modify `docs/memory_layer_architecture.md` — document C02 promotion/audit boundary.
-- Modify `docs/v1_contract_shapes.md` — freeze fingerprint and `CaseMemoryPromotionResult` shapes.
-- Modify `tests/test_case_memory_candidate.py` — fingerprint and preview regression coverage.
-- Create `tests/test_case_memory_promotion.py` — authority, audit, duplicate/conflict, partial-failure, side-effect-isolation tests.
-- Modify `tests/test_cli_case_memory_candidate.py` — `case approve` CLI parsing/routing tests.
-- Modify `tests/test_memory_manager.py` if present; otherwise add the full-store duplicate regression to the closest existing memory-manager test module.
-- Modify `tests/test_v1_contract_shapes.py` — contract documentation assertions.
+- Modify `backend/app/services/case_memory_candidate.py` — candidate fingerprint and preview output.
+- Create `backend/app/services/case_memory_promotion.py` — promotion result, audit journal, exact-approval gate, duplicate/conflict classification, persistence orchestration.
+- Modify `backend/app/services/memory_manager.py` — exhaustive duplicate preflight.
+- Modify `backend/app/cli.py` — thin `case approve` route.
+- Modify `tests/test_case_memory_candidate.py`.
+- Create `tests/test_case_memory_promotion.py`.
+- Modify `tests/test_memory_manager.py`.
+- Modify `tests/test_cli_case_memory_candidate.py`.
+- Modify `docs/commands.md`, `docs/memory_layer_architecture.md`, `docs/v1_contract_shapes.md`, and `tests/test_v1_contract_shapes.py`.
 
 ---
 
-### Task 1: Deterministic C01 Candidate Fingerprint
+### Task 1: Deterministic Candidate Fingerprint
 
 **Files:**
 - Modify: `backend/app/services/case_memory_candidate.py`
-- Modify: `tests/test_case_memory_candidate.py`
+- Test: `tests/test_case_memory_candidate.py`
 
-**Interfaces:**
-- Consumes: existing `CaseMemoryCandidate` and `CaseMemoryCandidatePreviewResult`.
-- Produces: `CASE_MEMORY_CANDIDATE_FINGERPRINT_VERSION`, `build_case_memory_candidate_fingerprint(candidate: CaseMemoryCandidate) -> str`, `normalize_case_memory_candidate_fingerprint(value: str) -> str | None`.
-
-- [ ] **Step 1: Write failing fingerprint tests**
-
-Add tests that build one real C01 candidate, fingerprint it twice, mutate promotion-relevant copies, and prove only meaningful changes alter the digest:
+**Produces:**
 
 ```python
-from copy import deepcopy
+CASE_MEMORY_CANDIDATE_FINGERPRINT_VERSION = "case_candidate_fingerprint_v1"
 
-from app.services.case_memory_candidate import (
-    build_case_memory_candidate_fingerprint,
-    normalize_case_memory_candidate_fingerprint,
-)
+def build_case_memory_candidate_fingerprint(candidate: CaseMemoryCandidate) -> str: ...
 
+def normalize_case_memory_candidate_fingerprint(value: str) -> str | None: ...
+```
 
+- [ ] **Step 1: Add failing fingerprint tests**
+
+```python
 def test_candidate_fingerprint_is_stable_for_same_candidate(tmp_path: Path) -> None:
     source_turn = record_turn(tmp_path, use_model=True)
     result = preview_case_memory_candidate(source_turn["turn_id"], memory_dir=tmp_path)
     assert result.candidate is not None
-
     first = build_case_memory_candidate_fingerprint(result.candidate)
     second = build_case_memory_candidate_fingerprint(result.candidate)
-
     assert first == second
     assert len(first) == 64
     assert first == first.lower()
@@ -81,7 +72,6 @@ def test_candidate_fingerprint_changes_when_operator_feedback_changes(tmp_path: 
     before = preview_case_memory_candidate(source_turn["turn_id"], memory_dir=tmp_path)
     assert before.candidate is not None
     fingerprint_a = build_case_memory_candidate_fingerprint(before.candidate)
-
     recorded = record_turn_feedback(
         turn_id=source_turn["turn_id"],
         label="corrected",
@@ -89,12 +79,9 @@ def test_candidate_fingerprint_changes_when_operator_feedback_changes(tmp_path: 
         memory_dir=tmp_path,
     )
     assert recorded["status"] == "ok"
-
     after = preview_case_memory_candidate(source_turn["turn_id"], memory_dir=tmp_path)
     assert after.candidate is not None
-    fingerprint_b = build_case_memory_candidate_fingerprint(after.candidate)
-
-    assert fingerprint_b != fingerprint_a
+    assert build_case_memory_candidate_fingerprint(after.candidate) != fingerprint_a
 
 
 def test_fingerprint_normalization_requires_exact_sha256_hex() -> None:
@@ -103,27 +90,20 @@ def test_fingerprint_normalization_requires_exact_sha256_hex() -> None:
     assert normalize_case_memory_candidate_fingerprint("g" * 64) is None
 ```
 
-Also add a direct unit test that constructs a copied `CaseMemoryCandidate` with changed `validation`, `promotion`, and `safety` while keeping lineage/provenance/proposed_case unchanged; the fingerprint must remain equal.
+Also test that changing only `validation`, `promotion`, or `safety` does not change the fingerprint, while changing provenance or proposed case does.
 
-- [ ] **Step 2: Run the new tests and verify RED**
-
-Run:
+- [ ] **Step 2: Run RED**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_case_memory_candidate.py -k "fingerprint" -q
 ```
 
-Expected: failures because the fingerprint helpers do not yet exist.
-
-- [ ] **Step 3: Implement canonical fingerprint helpers**
-
-Add:
+- [ ] **Step 3: Implement canonical fingerprinting**
 
 ```python
 import json
 import re
 
-CASE_MEMORY_CANDIDATE_FINGERPRINT_VERSION = "case_candidate_fingerprint_v1"
 FINGERPRINT_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
@@ -149,30 +129,18 @@ def normalize_case_memory_candidate_fingerprint(value: str) -> str | None:
     if not isinstance(value, str):
         return None
     cleaned = value.strip()
-    if FINGERPRINT_PATTERN.fullmatch(cleaned) is None:
-        return None
-    return cleaned.lower()
+    return cleaned.lower() if FINGERPRINT_PATTERN.fullmatch(cleaned) else None
 ```
 
-Extend `format_case_memory_candidate_preview_report()` so a valid candidate displays:
+Extend the preview report with `Candidate fingerprint:` and the exact `case approve` command; do not add writes.
 
-```text
-Candidate fingerprint: <64-char fingerprint>
-To approve this exact candidate:
-case approve <turn_id> <fingerprint>
-```
-
-The preview must remain read-only.
-
-- [ ] **Step 4: Run candidate tests and verify GREEN**
+- [ ] **Step 4: Run GREEN**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_case_memory_candidate.py -q
 ```
 
-Expected: all candidate tests pass.
-
-- [ ] **Step 5: Commit Task 1**
+- [ ] **Step 5: Commit**
 
 ```powershell
 git add backend/app/services/case_memory_candidate.py tests/test_case_memory_candidate.py
@@ -181,71 +149,23 @@ git commit -m "feat(memory): fingerprint case candidates"
 
 ---
 
-### Task 2: Full-Store Duplicate Integrity Hardening
+### Task 2: Exhaustive Duplicate Preflight
 
 **Files:**
 - Modify: `backend/app/services/memory_manager.py`
-- Test: existing memory-manager test module
+- Test: `tests/test_memory_manager.py`
 
-**Interfaces:**
-- Consumes: `read_case_memories(limit=None)`.
-- Produces: existing `save_case_memory()` with exhaustive duplicate preflight; no public signature change.
+- [ ] **Step 1: Add a failing regression**
 
-- [ ] **Step 1: Write a regression that places a duplicate beyond the previous default window**
+Add `test_save_case_memory_duplicate_preflight_scans_complete_store` to `tests/test_memory_manager.py`. Save one case, then at least 55 distinct valid filler cases, then attempt to save the original `case_id` again and require `status == "duplicate"`.
 
-Use the real store with more than 50 valid cases, then attempt to save a case whose `case_id` matches an older record:
-
-```python
-def test_save_case_memory_duplicate_preflight_scans_complete_store(tmp_path: Path) -> None:
-    original = build_case_memory(
-        case_id="case-old-duplicate",
-        problem="original",
-        symptoms=["symptom"],
-        suspected_cause="unknown",
-        lesson="lesson",
-        tags=["test"],
-        telemetry_evidence={"availability": "not_observed"},
-        event_evidence={"availability": "not_observed"},
-        action_taken="none",
-        outcome="unknown",
-        diagnostic_steps=["step"],
-        decision_notes=["note"],
-    )
-    assert save_case_memory(original, memory_dir=tmp_path).status == "ok"
-
-    for index in range(55):
-        filler = build_case_memory(
-            case_id=f"case-filler-{index}",
-            problem=f"filler {index}",
-            symptoms=["symptom"],
-            suspected_cause="unknown",
-            lesson="lesson",
-            tags=["test"],
-            telemetry_evidence={"availability": "not_observed"},
-            event_evidence={"availability": "not_observed"},
-            action_taken="none",
-            outcome="unknown",
-            diagnostic_steps=["step"],
-            decision_notes=["note"],
-        )
-        assert save_case_memory(filler, memory_dir=tmp_path).status == "ok"
-
-    duplicate = dict(original)
-    result = save_case_memory(duplicate, memory_dir=tmp_path)
-    assert result.status == "duplicate"
-```
-
-- [ ] **Step 2: Run the regression and verify RED against the bounded read**
+- [ ] **Step 2: Run RED**
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest <memory-manager-test-file> -k "complete_store" -q
+.\.venv\Scripts\python.exe -m pytest tests/test_memory_manager.py -k "complete_store" -q
 ```
 
-Expected: failure if the existing bounded read hides the old duplicate.
-
-- [ ] **Step 3: Harden the existing manager preflight**
-
-Change only the duplicate read inside `save_case_memory()`:
+- [ ] **Step 3: Make only the duplicate read exhaustive**
 
 ```python
 existing_cases_result = read_case_memories(limit=None, memory_dir=memory_dir)
@@ -253,88 +173,35 @@ existing_cases_result = read_case_memories(limit=None, memory_dir=memory_dir)
 
 Do not change list/search defaults.
 
-- [ ] **Step 4: Run the memory-manager tests and verify GREEN**
+- [ ] **Step 4: Run GREEN**
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest <memory-manager-test-file> -q
+.\.venv\Scripts\python.exe -m pytest tests/test_memory_manager.py -q
 ```
 
-- [ ] **Step 5: Commit Task 2**
+- [ ] **Step 5: Commit**
 
 ```powershell
-git add backend/app/services/memory_manager.py <memory-manager-test-file>
+git add backend/app/services/memory_manager.py tests/test_memory_manager.py
 git commit -m "fix(memory): scan all cases before save"
 ```
 
 ---
 
-### Task 3: Promotion Result, Audit Journal, and Domain Equivalence
+### Task 3: Promotion Contracts, Audit Journal, and Equivalence
 
 **Files:**
 - Create: `backend/app/services/case_memory_promotion.py`
 - Create: `tests/test_case_memory_promotion.py`
 
-**Interfaces:**
-- Consumes: `CaseMemoryCandidate`, `validate_case_memory`, `read_case_memories`, `save_case_memory`, C01 fingerprint helpers.
-- Produces: `CaseMemoryPromotionResult`, `case_promotion_journal_path()`, `append_case_promotion_audit_event()`, `case_records_equivalent()`, `build_case_promotion_id()`.
-
-- [ ] **Step 1: Write failing contract/audit/equivalence tests**
-
-Add tests for:
-
-```python
-def test_case_records_equivalent_ignores_only_store_metadata() -> None:
-    proposed = {"case_id": "case-1", "created_at": "t", "status": "unresolved"}
-    stored = dict(proposed, schema_version=1)
-    assert case_records_equivalent(stored, proposed) is True
-
-    changed = dict(stored, status="resolved")
-    assert case_records_equivalent(changed, proposed) is False
-
-
-def test_promotion_id_is_stable_for_exact_candidate() -> None:
-    first = build_case_promotion_id("candidate-1", "a" * 64)
-    second = build_case_promotion_id("candidate-1", "a" * 64)
-    assert first == second
-
-
-def test_audit_event_append_is_jsonl_and_append_only(tmp_path: Path) -> None:
-    event = build_case_promotion_audit_event(
-        promotion_id="promo-1",
-        source_turn_id="turn-1",
-        candidate_id="candidate-1",
-        candidate_fingerprint="a" * 64,
-        case_id="case-1",
-        event_type="attempt",
-        decision="attempting",
-        persisted=False,
-        reason="explicit exact-fingerprint approval entered persistence gate",
-    )
-    append_case_promotion_audit_event(event, memory_dir=tmp_path)
-    records = read_case_promotion_audit_events(memory_dir=tmp_path)
-    assert records == [event]
-```
-
-- [ ] **Step 2: Run promotion tests and verify RED**
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_case_memory_promotion.py -q
-```
-
-- [ ] **Step 3: Implement the minimal dedicated promotion primitives**
-
-Use constants:
+**Produces:**
 
 ```python
 CASE_PROMOTION_AUDIT_SCHEMA_VERSION = 1
 CASE_PROMOTION_POLICY_VERSION = "case_promotion_v1_5"
 CASE_PROMOTION_AUDIT_FILENAME = "case_promotions.jsonl"
 CASE_PROMOTION_APPROVAL_METHOD = "explicit_candidate_fingerprint"
-```
 
-Define:
-
-```python
 @dataclass(frozen=True)
 class CaseMemoryPromotionResult:
     status: str
@@ -352,17 +219,54 @@ class CaseMemoryPromotionResult:
     warnings: tuple[str, ...] = ()
 ```
 
-For equivalence, remove only `schema_version` from the stored copy when that key was injected by the low-level store, then compare the remaining domain dictionaries exactly. Do not ignore `created_at` because C01 supplies it as domain content.
+- [ ] **Step 1: Add failing primitive tests**
 
-Audit writes use `uuid4().hex` for `event_id`, UTC timestamps, sorted-key JSON, parent-directory creation, and append mode.
+Test:
 
-- [ ] **Step 4: Run promotion primitive tests and verify GREEN**
+```python
+def test_case_records_equivalent_ignores_only_store_schema_version() -> None:
+    proposed = {"case_id": "case-1", "created_at": "t", "status": "unresolved"}
+    stored = dict(proposed, schema_version=1)
+    assert case_records_equivalent(stored, proposed) is True
+    assert case_records_equivalent(dict(stored, status="resolved"), proposed) is False
+
+
+def test_promotion_id_is_stable_for_exact_candidate() -> None:
+    assert build_case_promotion_id("candidate-1", "a" * 64) == build_case_promotion_id(
+        "candidate-1", "a" * 64
+    )
+```
+
+Also test that audit records append to `memory/case_promotions.jsonl`, preserve previous entries, use unique `event_id`s, and carry the required schema/policy/approval fields.
+
+- [ ] **Step 2: Run RED**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_case_memory_promotion.py -q
 ```
 
-- [ ] **Step 5: Commit Task 3**
+- [ ] **Step 3: Implement minimal primitives**
+
+Implement:
+
+```python
+def build_case_promotion_id(candidate_id: str, fingerprint: str) -> str: ...
+def case_promotion_journal_path(memory_dir: str | Path | None = None) -> Path: ...
+def build_case_promotion_audit_event(...) -> dict[str, Any]: ...
+def append_case_promotion_audit_event(event: dict[str, Any], *, memory_dir=None) -> None: ...
+def read_case_promotion_audit_events(*, memory_dir=None) -> list[dict[str, Any]]: ...
+def case_records_equivalent(existing_case: dict[str, Any], proposed_case: dict[str, Any]) -> bool: ...
+```
+
+For equivalence, ignore only store-injected top-level `schema_version`; compare every other meaningful domain field exactly, including `created_at` and `updated_at`.
+
+- [ ] **Step 4: Run GREEN**
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_case_memory_promotion.py -q
+```
+
+- [ ] **Step 5: Commit**
 
 ```powershell
 git add backend/app/services/case_memory_promotion.py tests/test_case_memory_promotion.py
@@ -377,78 +281,51 @@ git commit -m "feat(memory): add case promotion audit contracts"
 - Modify: `backend/app/services/case_memory_promotion.py`
 - Modify: `tests/test_case_memory_promotion.py`
 
-**Interfaces:**
-- Consumes: `preview_case_memory_candidate(turn_id, memory_dir=...)`, `build_case_memory_candidate_fingerprint()`, `normalize_case_memory_candidate_fingerprint()`, `validate_case_memory()`, `read_case_memories(limit=None)`, `save_case_memory()`.
-- Produces: `promote_case_memory_candidate(turn_id: str, fingerprint: str, *, operational_memory_dir: str | Path | None = None, curated_memory_dir: str | Path | None = None) -> CaseMemoryPromotionResult`.
-
-- [ ] **Step 1: Write authority and refusal tests**
-
-Cover exact 64-hex input, mismatch, invalid preview, invalid case, and absence of alternate authority:
+**Produces:**
 
 ```python
-def test_promotion_refuses_stale_fingerprint_without_curated_write(tmp_path: Path) -> None:
-    operational = tmp_path / "operational"
-    curated = tmp_path / "curated"
-    turn = record_turn(operational)
-    preview = preview_case_memory_candidate(turn["turn_id"], memory_dir=operational)
-    assert preview.candidate is not None
-    stale = build_case_memory_candidate_fingerprint(preview.candidate)
-
-    assert record_turn_feedback(
-        turn_id=turn["turn_id"],
-        label="corrected",
-        note="changed after preview",
-        memory_dir=operational,
-    )["status"] == "ok"
-
-    result = promote_case_memory_candidate(
-        turn["turn_id"],
-        stale,
-        operational_memory_dir=operational,
-        curated_memory_dir=curated,
-    )
-
-    assert result.status == "refused"
-    assert result.persisted is False
-    assert read_case_memories(limit=None, memory_dir=curated).data["entry_count"] == 0
+def promote_case_memory_candidate(
+    turn_id: str,
+    fingerprint: str,
+    *,
+    operational_memory_dir: str | Path | None = None,
+    curated_memory_dir: str | Path | None = None,
+) -> CaseMemoryPromotionResult: ...
 ```
 
-Also patch model/tool/OS entrypoints to raise if called during promotion.
+- [ ] **Step 1: Add authority/refusal tests**
 
-- [ ] **Step 2: Write success, duplicate, and conflict tests**
+Require no persistence for missing/malformed fingerprint, stale fingerprint, invalid C01 preview, invalid provenance, or invalid proposed case. Patch model invocation, tool executor, Windows action layers, and generic memory-policy evaluation to raise if promotion calls them.
 
-Test one valid exact approval writes one case, repeating it leaves one case and returns `status="duplicate"`, `persisted=True`, `case_write_performed=False`, and same ID with altered meaningful content returns conflict with no extra append.
+- [ ] **Step 2: Add success/idempotency/conflict tests**
 
-- [ ] **Step 3: Write audit-order and failure-matrix tests**
+Require:
 
-Monkeypatch audit and save functions to record call order and inject failures:
-
-```python
-def test_attempt_audit_precedes_case_write(monkeypatch, ...):
-    calls: list[str] = []
-    monkeypatch.setattr(module, "append_case_promotion_audit_event", lambda *a, **k: calls.append("audit"))
-    monkeypatch.setattr(module, "save_case_memory", lambda *a, **k: calls.append("case") or ok_save_result())
-    ...
-    assert calls[:2] == ["audit", "case"]
+```text
+first exact approval  -> status=ok, decision=promoted, persisted=true, case_write_performed=true
+same approval again   -> status=duplicate, decision=duplicate, persisted=true, case_write_performed=false
+same case_id/different meaningful content -> status=conflict, no extra case append
 ```
 
-Required matrix:
+- [ ] **Step 3: Add audit-order/failure-matrix tests**
 
-- ATTEMPT audit failure => no save call, `status="error"`, `persisted=False`, `audit_complete=False`.
-- save failure => OUTCOME error attempted, `status="error"`, `decision="error"`, `persisted=False`.
-- save success + outcome success => `status="ok"`, `decision="promoted"`, `persisted=True`, `case_write_performed=True`, `audit_complete=True`.
-- save success + outcome failure => `status="partial"`, `decision="promoted"`, `persisted=True`, `case_write_performed=True`, `audit_complete=False`.
-- retry after partial => no second case append, duplicate result.
+Assert ATTEMPT audit occurs before any curated save. Cover:
 
-- [ ] **Step 4: Run the new orchestrator tests and verify RED**
+```text
+ATTEMPT audit failure -> error, persisted=false, no save call
+save failure          -> error outcome attempted, persisted=false
+save + outcome success -> ok/promoted, persisted=true, audit_complete=true
+save success + outcome audit failure -> partial/promoted, persisted=true, audit_complete=false
+retry after partial -> duplicate, no second curated append
+```
+
+- [ ] **Step 4: Run RED**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_case_memory_promotion.py -q
 ```
 
-- [ ] **Step 5: Implement promotion in strict gate order**
-
-Implement these checks in order:
+- [ ] **Step 5: Implement the gate in this order**
 
 ```python
 clean_turn_id = turn_id.strip() if isinstance(turn_id, str) else ""
@@ -473,17 +350,15 @@ if not case_validation.valid:
     return refused_result(...)
 ```
 
-Then inspect `read_case_memories(limit=None, memory_dir=curated_memory_dir)`, classify no-match/equivalent/conflict, append ATTEMPT audit, and only then save the exact `candidate.proposed_case` for a new case.
+Then read the complete curated store with `read_case_memories(limit=None, ...)`, classify new/equivalent/conflict, append ATTEMPT audit, persist exactly `candidate.proposed_case` only for a new case, append OUTCOME audit, and return truthful status fields. Do not call `evaluate_memory_candidate()`.
 
-Do not call `evaluate_memory_candidate()` from `memory_policy.py`.
-
-- [ ] **Step 6: Run promotion tests and verify GREEN**
+- [ ] **Step 6: Run GREEN**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_case_memory_promotion.py -q
 ```
 
-- [ ] **Step 7: Commit Task 4**
+- [ ] **Step 7: Commit**
 
 ```powershell
 git add backend/app/services/case_memory_promotion.py tests/test_case_memory_promotion.py
@@ -498,18 +373,11 @@ git commit -m "feat(memory): add controlled case promotion"
 - Modify: `backend/app/cli.py`
 - Modify: `tests/test_cli_case_memory_candidate.py`
 
-**Interfaces:**
-- Consumes: `promote_case_memory_candidate()` and `format_case_memory_promotion_result()`.
-- Produces: canonical CLI route `case approve <turn_id> <fingerprint>`.
-
-- [ ] **Step 1: Write failing CLI tests**
-
-Add:
+- [ ] **Step 1: Add failing CLI tests**
 
 ```python
 def test_case_approve_routes_exact_turn_and_fingerprint(monkeypatch, capsys) -> None:
     calls: list[tuple[str, str]] = []
-
     monkeypatch.setattr(
         cli,
         "promote_case_memory_candidate",
@@ -522,41 +390,37 @@ def test_case_approve_routes_exact_turn_and_fingerprint(monkeypatch, capsys) -> 
         lambda result: "LIGHTHOUSE CASE PROMOTION\nStatus: ok",
         raising=False,
     )
-
     fingerprint = "a" * 64
-    handled = cli.run_canonical_command(f"case approve turn-example {fingerprint}")
-    output = capsys.readouterr().out
-
-    assert handled == "handled"
+    assert cli.run_canonical_command(f"case approve turn-example {fingerprint}") == "handled"
     assert calls == [("turn-example", fingerprint)]
-    assert "Status: ok" in output
+    assert "Status: ok" in capsys.readouterr().out
 ```
 
-Add missing-turn, missing-fingerprint, extra-argument, `approve latest`, and malformed-fingerprint tests. CLI must not substitute latest or prompt interactively.
+Also require usage-only behavior for missing turn, missing fingerprint, extra arguments, `approve latest`, and malformed fingerprint. No implicit latest turn and no interactive prompt.
 
-- [ ] **Step 2: Run CLI tests and verify RED**
+- [ ] **Step 2: Run RED**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_cli_case_memory_candidate.py -q
 ```
 
-- [ ] **Step 3: Add thin imports, formatter, help text, and parser**
+- [ ] **Step 3: Implement only thin routing**
 
-Use exact usage:
+Add imports for the promotion service/formatter, help text for:
 
 ```text
 case approve <turn_id> <fingerprint>
 ```
 
-Parse with whitespace splitting after `case approve `. Require exactly two arguments. Pass only those strings to the promotion service. No persistence logic belongs in `cli.py`.
+Parse exactly two arguments after `case approve `. CLI contains no persistence logic.
 
-- [ ] **Step 4: Run CLI tests and verify GREEN**
+- [ ] **Step 4: Run GREEN**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_cli_case_memory_candidate.py -q
 ```
 
-- [ ] **Step 5: Commit Task 5**
+- [ ] **Step 5: Commit**
 
 ```powershell
 git add backend/app/cli.py tests/test_cli_case_memory_candidate.py
@@ -565,7 +429,7 @@ git commit -m "feat(cli): add exact case approval command"
 
 ---
 
-### Task 6: Contract Documentation and Complete Verification
+### Task 6: Contracts, Documentation, and Verification
 
 **Files:**
 - Modify: `docs/commands.md`
@@ -573,59 +437,37 @@ git commit -m "feat(cli): add exact case approval command"
 - Modify: `docs/v1_contract_shapes.md`
 - Modify: `tests/test_v1_contract_shapes.py`
 
-**Interfaces:**
-- Consumes: final code contracts from Tasks 1-5.
-- Produces: durable C02 user/architecture/contract documentation.
+- [ ] **Step 1: Freeze implemented contracts in docs**
 
-- [ ] **Step 1: Update docs to match implemented behavior exactly**
+Document exact preview/approve commands, fingerprint payload/exclusions, Operator-only authority, audit journal/event fields, result fields/statuses/decisions, duplicate semantics (`persisted=true`, `case_write_performed=false`), partial semantics (`decision=promoted`, `persisted=true`, `audit_complete=false`), and no model/tool/OS authority expansion.
 
-Document:
-
-```text
-case preview <turn_id>
-case approve <turn_id> <64-hex-fingerprint>
-```
-
-Freeze:
-
-- fingerprint payload and exclusions;
-- Operator-only authority;
-- audit journal path and event fields;
-- `CaseMemoryPromotionResult` fields and status/decision enums;
-- duplicate result semantics: `persisted=true`, `case_write_performed=false`;
-- partial semantics: `decision=promoted`, `persisted=true`, `audit_complete=false`;
-- no model/tool/OS authority expansion.
-
-- [ ] **Step 2: Update contract-shape tests and run them**
+- [ ] **Step 2: Run contract tests**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_v1_contract_shapes.py -q
 ```
 
-- [ ] **Step 3: Run focused C02/C01/memory/CLI tests**
+- [ ] **Step 3: Run focused regression**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest `
   tests/test_case_memory_candidate.py `
   tests/test_case_memory_promotion.py `
+  tests/test_memory_manager.py `
   tests/test_cli_case_memory_candidate.py `
   tests/test_v1_contract_shapes.py `
   -q
 ```
 
-Also include the existing memory-manager test module used in Task 2.
-
-Expected: all focused tests pass.
-
-- [ ] **Step 4: Run full Lighthouse regression**
+- [ ] **Step 4: Run full regression**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests -ra
 ```
 
-Required: at least the accepted C01 baseline with zero failures; the pass count should increase from 650 as C02 tests are added, while existing 5 skips may remain if unchanged.
+Required: zero failures and no regression below the accepted C01 baseline.
 
-- [ ] **Step 5: Run static and whitespace gates**
+- [ ] **Step 5: Run static/whitespace gates**
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall backend tests
@@ -636,54 +478,50 @@ Required: at least the accepted C01 baseline with zero failures; the pass count 
   backend/app/cli.py `
   tests/test_case_memory_candidate.py `
   tests/test_case_memory_promotion.py `
+  tests/test_memory_manager.py `
   tests/test_cli_case_memory_candidate.py
 git diff --check
 ```
 
-All must pass.
-
-- [ ] **Step 6: Commit documentation/contracts**
+- [ ] **Step 6: Commit docs/contracts**
 
 ```powershell
 git add docs/commands.md docs/memory_layer_architecture.md docs/v1_contract_shapes.md tests/test_v1_contract_shapes.py
 git commit -m "docs(memory): document controlled case promotion"
 ```
 
-- [ ] **Step 7: Run final scope gate before push**
+- [ ] **Step 7: Final scope gate**
 
 ```powershell
 git status --short
-git log --oneline --decorate -8
+git log --oneline --decorate -10
 git diff origin/main...HEAD --stat
 git diff origin/main...HEAD --check
 ```
 
-Confirm only C02-authorized code/tests/docs plus the approved spec/plan are present.
-
-- [ ] **Step 8: Push feature branch and open PR only after Byte review**
-
-Do not merge directly. PR must run GitHub Windows Pytest CI and remain under Byte-Nolan final merge authority.
+Do not push or open a PR until Byte source review is complete.
 
 ---
 
-## Live Smoke-Test Gate After Automated Acceptance
+## Live Smoke-Test Gate
 
-Do not perform this before all automated gates are green.
+Run only after all automated gates are green:
 
-1. Generate one genuine conversational turn in Lighthouse.
-2. Run `case preview <turn_id>` and inspect the candidate/fingerprint.
-3. Run `case approve <turn_id> <fingerprint>`.
-4. Verify the case appears exactly once in `data/memory/cases.jsonl`.
+1. Generate a genuine conversational turn.
+2. `case preview <turn_id>` and inspect/copy the fingerprint.
+3. `case approve <turn_id> <fingerprint>`.
+4. Verify exactly one matching record in `data/memory/cases.jsonl`.
 5. Repeat the same approval and verify duplicate/no second case.
-6. Inspect `memory/case_promotions.jsonl` for ATTEMPT/OUTCOME evidence.
-7. Preview another genuine turn, capture fingerprint A, add/change Operator feedback, then attempt approval with fingerprint A.
-8. Confirm stale approval is refused with no new curated write.
-9. Preview again and confirm fingerprint B differs.
-10. Compare CLI claims to the two on-disk append-only stores before declaring C02 complete.
+6. Inspect `memory/case_promotions.jsonl` ATTEMPT/OUTCOME events.
+7. Preview another genuine turn and capture fingerprint A.
+8. Add/change Operator feedback for that turn.
+9. Attempt approval with fingerprint A; it must refuse without a curated write.
+10. Preview again and confirm fingerprint B differs.
+11. Compare CLI claims to both on-disk append-only stores before declaring C02 complete.
 
-## Plan Self-Review
+## Self-Review
 
-- Spec coverage: all approved C02 authority, fingerprint, audit, duplicate/conflict, failure, side-effect, CLI, regression, and smoke-test requirements map to Tasks 1-6.
-- Placeholder scan: no TODO/TBD implementation gaps remain. The only execution-time variable is the exact existing memory-manager test filename, which must be resolved from the repository before Task 2 without changing the test intent.
-- Type consistency: fingerprint helper, promotion result fields, promotion service signature, CLI route, and status/decision names are consistent across tasks.
-- Scope check: C02 remains one bounded persistence subsystem and does not include lifecycle, semantic memory, or OS/tool work.
+- Spec coverage: Tasks 1-6 cover every approved fingerprint, authority, audit, integrity, failure, CLI, side-effect, regression, and smoke-test requirement.
+- Placeholder scan: no TBD/TODO or unresolved file/path placeholders remain.
+- Type consistency: fingerprint helper, `CaseMemoryPromotionResult`, promotion service signature, CLI command, statuses, and decisions are consistent throughout.
+- Scope check: C02 remains a single bounded persistence subsystem; no lifecycle, semantic memory, Navigator, tool, or OS work is included.
