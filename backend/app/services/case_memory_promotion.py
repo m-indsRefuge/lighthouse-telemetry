@@ -29,6 +29,15 @@ from app.services.case_memory_candidate import (
     preview_case_memory_candidate,
 )
 from app.services.conversational_engine_turn import DEFAULT_MEMORY_DIR
+from app.services.memory_cases import validate_case_memory
+from app.services.memory_manager import (
+    MEMORY_MANAGER_STATUS_OK,
+    save_case_memory,
+)
+from app.services.memory_store import (
+    MEMORY_STORE_STATUS_OK,
+    read_case_memories,
+)
 
 
 CASE_PROMOTION_AUDIT_SCHEMA_VERSION = 1
@@ -115,6 +124,7 @@ def build_case_promotion_audit_event(
     decision: str,
     persisted: bool,
     reason: str,
+    case_write_performed: bool = False,
 ) -> dict[str, Any]:
     """Build one append-only C02 promotion audit event."""
     return {
@@ -132,6 +142,7 @@ def build_case_promotion_audit_event(
         "approval_method": CASE_PROMOTION_APPROVAL_METHOD,
         "decision": decision,
         "persisted": persisted,
+        "case_write_performed": case_write_performed,
         "reason": reason,
     }
 
@@ -331,15 +342,235 @@ def promote_case_memory_candidate(
             warnings=tuple(candidate.validation.warnings),
         )
 
-    # Fail closed until Task 4B adds the audited curated-memory boundary.
-    return _refused_promotion_result(
-        message=(
-            "Exact candidate approval passed validation, but curated case "
-            "persistence is not enabled in this implementation slice."
-        ),
+    case_validation = validate_case_memory(candidate.proposed_case)
+
+    if not case_validation.valid:
+        return _refused_promotion_result(
+            message=(
+                "Proposed case failed independent validation immediately "
+                "before promotion."
+            ),
+            source_turn_id=clean_turn_id,
+            candidate_fingerprint=normalized_fingerprint,
+            candidate_id=candidate_id,
+            case_id=case_id,
+            errors=tuple(case_validation.errors),
+            warnings=tuple(case_validation.warnings),
+        )
+
+    promotion_id = build_case_promotion_id(
+        candidate_id,
+        normalized_fingerprint,
+    )
+
+    existing_result = read_case_memories(
+        limit=None,
+        memory_dir=curated_memory_dir,
+    )
+
+    if existing_result.status != MEMORY_STORE_STATUS_OK:
+        return CaseMemoryPromotionResult(
+            status="error",
+            decision="error",
+            message="Curated case store could not be read safely.",
+            source_turn_id=clean_turn_id,
+            candidate_id=candidate_id,
+            candidate_fingerprint=normalized_fingerprint,
+            promotion_id=promotion_id,
+            case_id=case_id,
+            persisted=False,
+            case_write_performed=False,
+            audit_complete=False,
+            errors=(
+                existing_result.error
+                or existing_result.message
+                or "Unknown curated-memory read error.",
+            ),
+            warnings=tuple(case_validation.warnings),
+        )
+
+    existing_data = existing_result.data
+    existing_cases = (
+        existing_data.get("entries", [])
+        if isinstance(existing_data, dict)
+        else []
+    )
+
+    same_id_cases = [
+        existing_case
+        for existing_case in existing_cases
+        if existing_case.get("case_id") == case_id
+    ]
+
+    persistence_decision = "new"
+
+    if same_id_cases:
+        if all(
+            case_records_equivalent(
+                existing_case,
+                candidate.proposed_case,
+            )
+            for existing_case in same_id_cases
+        ):
+            persistence_decision = "duplicate"
+        else:
+            persistence_decision = "conflict"
+
+    attempt_event = build_case_promotion_audit_event(
+        promotion_id=promotion_id,
         source_turn_id=clean_turn_id,
-        candidate_fingerprint=normalized_fingerprint,
         candidate_id=candidate_id,
+        candidate_fingerprint=normalized_fingerprint,
         case_id=case_id,
-        warnings=tuple(candidate.validation.warnings),
+        event_type="attempt",
+        decision="attempting",
+        persisted=False,
+        case_write_performed=False,
+        reason=(
+            "Explicit exact-fingerprint Operator approval entered the "
+            "controlled persistence gate."
+        ),
+    )
+
+    append_case_promotion_audit_event(
+        attempt_event,
+        memory_dir=operational_memory_dir,
+    )
+
+    if persistence_decision == "duplicate":
+        outcome_event = build_case_promotion_audit_event(
+            promotion_id=promotion_id,
+            source_turn_id=clean_turn_id,
+            candidate_id=candidate_id,
+            candidate_fingerprint=normalized_fingerprint,
+            case_id=case_id,
+            event_type="outcome",
+            decision="duplicate",
+            persisted=True,
+            case_write_performed=False,
+            reason=(
+                "An equivalent case with the same case_id already exists; "
+                "no second curated case was written."
+            ),
+        )
+
+        append_case_promotion_audit_event(
+            outcome_event,
+            memory_dir=operational_memory_dir,
+        )
+
+        return CaseMemoryPromotionResult(
+            status="duplicate",
+            decision="duplicate",
+            message=(
+                "Exact approved case already exists in curated memory; "
+                "no duplicate case was written."
+            ),
+            source_turn_id=clean_turn_id,
+            candidate_id=candidate_id,
+            candidate_fingerprint=normalized_fingerprint,
+            promotion_id=promotion_id,
+            case_id=case_id,
+            persisted=True,
+            case_write_performed=False,
+            audit_complete=True,
+            warnings=tuple(case_validation.warnings),
+        )
+
+    if persistence_decision == "conflict":
+        outcome_event = build_case_promotion_audit_event(
+            promotion_id=promotion_id,
+            source_turn_id=clean_turn_id,
+            candidate_id=candidate_id,
+            candidate_fingerprint=normalized_fingerprint,
+            case_id=case_id,
+            event_type="outcome",
+            decision="conflict",
+            persisted=False,
+            case_write_performed=False,
+            reason=(
+                "A case with the same case_id exists with different "
+                "meaningful domain content."
+            ),
+        )
+
+        append_case_promotion_audit_event(
+            outcome_event,
+            memory_dir=operational_memory_dir,
+        )
+
+        return CaseMemoryPromotionResult(
+            status="conflict",
+            decision="conflict",
+            message=(
+                "Case promotion refused because the case_id already exists "
+                "with different curated content."
+            ),
+            source_turn_id=clean_turn_id,
+            candidate_id=candidate_id,
+            candidate_fingerprint=normalized_fingerprint,
+            promotion_id=promotion_id,
+            case_id=case_id,
+            persisted=False,
+            case_write_performed=False,
+            audit_complete=True,
+            errors=(
+                "Existing case_id conflicts with the exact approved case.",
+            ),
+            warnings=tuple(case_validation.warnings),
+        )
+
+    save_result = save_case_memory(
+        candidate.proposed_case,
+        memory_dir=curated_memory_dir,
+    )
+
+    if save_result.status != MEMORY_MANAGER_STATUS_OK:
+        return CaseMemoryPromotionResult(
+            status="error",
+            decision="error",
+            message="Curated case persistence did not complete.",
+            source_turn_id=clean_turn_id,
+            candidate_id=candidate_id,
+            candidate_fingerprint=normalized_fingerprint,
+            promotion_id=promotion_id,
+            case_id=case_id,
+            persisted=False,
+            case_write_performed=False,
+            audit_complete=False,
+            errors=tuple(save_result.errors),
+            warnings=tuple(save_result.warnings),
+        )
+
+    outcome_event = build_case_promotion_audit_event(
+        promotion_id=promotion_id,
+        source_turn_id=clean_turn_id,
+        candidate_id=candidate_id,
+        candidate_fingerprint=normalized_fingerprint,
+        case_id=case_id,
+        event_type="outcome",
+        decision="promoted",
+        persisted=True,
+        case_write_performed=True,
+        reason="Exact approved case was appended to curated CaseMemory.",
+    )
+
+    append_case_promotion_audit_event(
+        outcome_event,
+        memory_dir=operational_memory_dir,
+    )
+
+    return CaseMemoryPromotionResult(
+        status="ok",
+        decision="promoted",
+        message="Exact approved case was promoted to curated memory.",
+        source_turn_id=clean_turn_id,
+        candidate_id=candidate_id,
+        candidate_fingerprint=normalized_fingerprint,
+        promotion_id=promotion_id,
+        case_id=case_id,
+        persisted=True,
+        case_write_performed=True,
+        audit_complete=True,
+        warnings=tuple(case_validation.warnings),
     )
