@@ -280,3 +280,37 @@ def test_get_memory_status_counts_memory_records(tmp_path: Path) -> None:
     assert result.data["valid_case_count"] == 1
     assert result.data["invalid_case_count"] == 0
     assert result.data["knowledge_entry_count"] == 1
+
+# === C02 TASK 2: COMPLETE-STORE DUPLICATE PREFLIGHT ===
+
+
+def test_save_case_memory_duplicate_preflight_scans_complete_store(
+    tmp_path: Path,
+) -> None:
+    memory_dir = tmp_path / "memory"
+
+    original = build_valid_case()
+    original["case_id"] = "case-old-duplicate"
+
+    first = save_case_memory(original, memory_dir=memory_dir)
+    assert first.status == MEMORY_MANAGER_STATUS_OK
+
+    # Move the original beyond read_case_memories()'s default 50-record window.
+    for index in range(55):
+        filler = dict(original)
+        filler["case_id"] = f"case-filler-{index:02d}"
+
+        filler_result = save_case_memory(
+            filler,
+            memory_dir=memory_dir,
+        )
+
+        assert filler_result.status == MEMORY_MANAGER_STATUS_OK
+
+    result = save_case_memory(
+        dict(original),
+        memory_dir=memory_dir,
+    )
+
+    assert result.status == MEMORY_MANAGER_STATUS_DUPLICATE
+    assert result.data["saved"] is False
