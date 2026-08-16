@@ -87,7 +87,12 @@ from app.services.conversation_turn_feedback import (
 )
 from app.services.case_memory_candidate import (
     format_case_memory_candidate_preview_report,
+    normalize_case_memory_candidate_fingerprint,
     preview_case_memory_candidate,
+)
+from app.services.case_memory_promotion import (
+    format_case_memory_promotion_result,
+    promote_case_memory_candidate,
 )
 from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
 from app.services.target_resolver import (
@@ -168,6 +173,7 @@ def print_help() -> None:
     print("turn feedback <turn_id> <label> [note] Save feedback for a turn")
     print("turn feedback latest <label> [note] Save feedback for the latest turn")
     print("case preview <turn_id> Preview a deterministic case candidate without writing memory")
+    print("case approve <turn_id> <fingerprint> Promote only the exact approved case candidate")
     print("llm previews Show recent LLM route preview journal entries")
     print("llm preview feedback labels Show valid LLM preview feedback labels")
     print("llm preview feedback <preview_id> <label> [note] Save feedback for an LLM preview")
@@ -199,6 +205,7 @@ def print_help() -> None:
     print("- turn feedback turn-example useful routed correctly")
     print("- turn feedback latest useful routed correctly")
     print("- case preview turn-example")
+    print("- case approve turn-example <64-character-fingerprint>")
     print("- llm previews")
     print("- llm preview feedback labels")
     print("- llm preview feedback llmprev-example useful routed correctly")
@@ -1644,6 +1651,18 @@ def print_case_preview_report(turn_id: str) -> None:
     print(format_case_memory_candidate_preview_report(result))
 
 
+def print_case_approval_report(
+    turn_id: str,
+    fingerprint: str,
+) -> None:
+    """Promote one exact Operator-approved candidate and print the result."""
+    result = promote_case_memory_candidate(
+        turn_id,
+        fingerprint,
+    )
+    print(format_case_memory_promotion_result(result))
+
+
 def is_placeholder_turn_id(turn_id: str) -> bool:
     """
     Return true when the Operator entered an example placeholder, not a real id.
@@ -1831,6 +1850,51 @@ def run_canonical_command(command: str) -> str:
             return "handled"
 
         print_case_preview_report(turn_id)
+        return "handled"
+
+    if normalized_command == "case approve":
+        print("Usage: case approve <turn_id> <fingerprint>")
+        return "handled"
+
+    if normalized_command.startswith("case approve "):
+        approval_text = cleaned_command[len("case approve "):].strip()
+        parts = approval_text.split()
+
+        if len(parts) != 2:
+            print("Usage: case approve <turn_id> <fingerprint>")
+            return "handled"
+
+        turn_id, supplied_fingerprint = parts
+
+        if (
+            turn_id.strip().lower() == "latest"
+            or is_placeholder_turn_id(turn_id)
+        ):
+            print("Usage: case approve <turn_id> <fingerprint>")
+            print(
+                "Use the exact turn id shown by 'case preview'; "
+                "'latest' is not an approval authority."
+            )
+            return "handled"
+
+        normalized_fingerprint = (
+            normalize_case_memory_candidate_fingerprint(
+                supplied_fingerprint
+            )
+        )
+
+        if normalized_fingerprint is None:
+            print("Usage: case approve <turn_id> <fingerprint>")
+            print(
+                "Fingerprint must be exactly 64 hexadecimal characters "
+                "from the current case preview."
+            )
+            return "handled"
+
+        print_case_approval_report(
+            turn_id,
+            normalized_fingerprint,
+        )
         return "handled"
 
     if normalized_command in {

@@ -101,3 +101,176 @@ def test_case_preview_surfaces_a_safe_missing_turn_report(monkeypatch, capsys) -
     assert "No case memory was written." in output
     assert "No tool was executed." in output
     assert "No model was called." in output
+
+# === C02 TASK 5: EXACT CASE APPROVAL CLI ===
+
+
+def test_case_approve_routes_exact_turn_and_fingerprint(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    fingerprint = "a" * 64
+
+    monkeypatch.setattr(
+        cli,
+        "promote_case_memory_candidate",
+        lambda turn_id, supplied_fingerprint: (
+            calls.append((turn_id, supplied_fingerprint)) or object()
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli,
+        "format_case_memory_promotion_result",
+        lambda result: (
+            "LIGHTHOUSE CASE PROMOTION\n"
+            "Status: ok\n"
+            "Decision: promoted"
+        ),
+        raising=False,
+    )
+
+    result = cli.run_canonical_command(
+        f"case approve turn-example {fingerprint}"
+    )
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert calls == [("turn-example", fingerprint)]
+    assert "LIGHTHOUSE CASE PROMOTION" in output
+    assert "Status: ok" in output
+    assert "Decision: promoted" in output
+
+
+def test_case_approve_accepts_uppercase_fingerprint_but_routes_normalized(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    lowercase = "abcdef0123456789" * 4
+    uppercase = lowercase.upper()
+
+    monkeypatch.setattr(
+        cli,
+        "promote_case_memory_candidate",
+        lambda turn_id, supplied_fingerprint: (
+            calls.append((turn_id, supplied_fingerprint)) or object()
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli,
+        "format_case_memory_promotion_result",
+        lambda result: "LIGHTHOUSE CASE PROMOTION\nStatus: ok",
+        raising=False,
+    )
+
+    result = cli.run_canonical_command(
+        f"case approve turn-example {uppercase}"
+    )
+
+    capsys.readouterr()
+
+    assert result == "handled"
+    assert calls == [("turn-example", lowercase)]
+
+
+def test_case_approve_requires_exact_turn_and_fingerprint(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        cli,
+        "promote_case_memory_candidate",
+        lambda turn_id, fingerprint: calls.append(
+            (turn_id, fingerprint)
+        ),
+        raising=False,
+    )
+
+    commands = [
+        "case approve",
+        "case approve turn-example",
+        f"case approve turn-example {'a' * 64} extra",
+    ]
+
+    for command in commands:
+        result = cli.run_canonical_command(command)
+        output = capsys.readouterr().out
+
+        assert result == "handled"
+        assert "Usage: case approve <turn_id> <fingerprint>" in output
+
+    assert calls == []
+
+
+def test_case_approve_rejects_malformed_fingerprint_before_promotion(
+    monkeypatch,
+    capsys,
+) -> None:
+    def fail_if_called(turn_id: str, fingerprint: str):
+        raise AssertionError(
+            "Malformed fingerprint must not reach promotion service."
+        )
+
+    monkeypatch.setattr(
+        cli,
+        "promote_case_memory_candidate",
+        fail_if_called,
+        raising=False,
+    )
+
+    for malformed in [
+        "short",
+        "g" * 64,
+        "a" * 63,
+        "a" * 65,
+    ]:
+        result = cli.run_canonical_command(
+            f"case approve turn-example {malformed}"
+        )
+        output = capsys.readouterr().out
+
+        assert result == "handled"
+        assert "Usage: case approve <turn_id> <fingerprint>" in output
+
+
+def test_case_approve_rejects_latest_shortcut(
+    monkeypatch,
+    capsys,
+) -> None:
+    def fail_if_called(turn_id: str, fingerprint: str):
+        raise AssertionError(
+            "case approve must never resolve an implicit latest turn."
+        )
+
+    monkeypatch.setattr(
+        cli,
+        "promote_case_memory_candidate",
+        fail_if_called,
+        raising=False,
+    )
+
+    fingerprint = "a" * 64
+
+    result = cli.run_canonical_command(
+        f"case approve latest {fingerprint}"
+    )
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "Usage: case approve <turn_id> <fingerprint>" in output
+    assert "latest" in output.lower()
+
+
+def test_case_help_lists_exact_approval_command(capsys) -> None:
+    result = cli.run_canonical_command("help")
+    output = capsys.readouterr().out
+
+    assert result == "handled"
+    assert "case approve <turn_id> <fingerprint>" in output
