@@ -163,3 +163,238 @@ def test_case_promotion_audit_is_append_only_and_carries_authority_fields(
     )
 
     assert records == [first, second]
+
+# === C02 TASK 4A: EXACT-APPROVAL REFUSAL GATE ===
+
+
+def test_promote_case_memory_candidate_rejects_malformed_fingerprint_before_preview(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = load_promotion_service()
+
+    def forbidden_preview(*args, **kwargs):
+        raise AssertionError(
+            "Malformed fingerprint must stop before candidate preview."
+        )
+
+    monkeypatch.setattr(
+        service,
+        "preview_case_memory_candidate",
+        forbidden_preview,
+        raising=False,
+    )
+
+    result = service.promote_case_memory_candidate(
+        "turn-1",
+        "not-a-valid-fingerprint",
+        operational_memory_dir=tmp_path / "operational",
+        curated_memory_dir=tmp_path / "curated",
+    )
+
+    assert result.status == "refused"
+    assert result.decision == "refused"
+    assert result.persisted is False
+    assert result.case_write_performed is False
+    assert result.audit_complete is False
+
+    assert not service.case_promotion_journal_path(
+        tmp_path / "operational"
+    ).exists()
+    assert not (tmp_path / "curated" / "cases.jsonl").exists()
+
+
+def test_promote_case_memory_candidate_refuses_invalid_preview_without_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    service = load_promotion_service()
+
+    monkeypatch.setattr(
+        service,
+        "preview_case_memory_candidate",
+        lambda *args, **kwargs: SimpleNamespace(
+            status="invalid",
+            candidate=None,
+            errors=("candidate invalid",),
+            warnings=(),
+        ),
+        raising=False,
+    )
+
+    def forbidden_write(*args, **kwargs):
+        raise AssertionError(
+            "Invalid preview must not cross a write boundary."
+        )
+
+    monkeypatch.setattr(
+        service,
+        "append_case_promotion_audit_event",
+        forbidden_write,
+    )
+    monkeypatch.setattr(
+        service,
+        "save_case_memory",
+        forbidden_write,
+        raising=False,
+    )
+
+    result = service.promote_case_memory_candidate(
+        "turn-1",
+        "a" * 64,
+        operational_memory_dir=tmp_path / "operational",
+        curated_memory_dir=tmp_path / "curated",
+    )
+
+    assert result.status == "refused"
+    assert result.decision == "refused"
+    assert result.persisted is False
+    assert result.case_write_performed is False
+
+
+def test_promote_case_memory_candidate_refuses_invalid_candidate_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    service = load_promotion_service()
+
+    candidate = SimpleNamespace(
+        schema_version="case_memory_candidate_v1_5",
+        candidate_id="candidate-1",
+        source_turn_id="turn-1",
+        provenance={"source": "test"},
+        proposed_case={"case_id": "case-1"},
+        validation=SimpleNamespace(
+            provenance_valid=False,
+            case_valid=True,
+            errors=("provenance invalid",),
+            warnings=(),
+        ),
+    )
+
+    monkeypatch.setattr(
+        service,
+        "preview_case_memory_candidate",
+        lambda *args, **kwargs: SimpleNamespace(
+            status="ok",
+            candidate=candidate,
+            errors=(),
+            warnings=(),
+        ),
+        raising=False,
+    )
+
+    def forbidden_write(*args, **kwargs):
+        raise AssertionError(
+            "Invalid candidate must not cross a write boundary."
+        )
+
+    monkeypatch.setattr(
+        service,
+        "append_case_promotion_audit_event",
+        forbidden_write,
+    )
+    monkeypatch.setattr(
+        service,
+        "save_case_memory",
+        forbidden_write,
+        raising=False,
+    )
+
+    result = service.promote_case_memory_candidate(
+        "turn-1",
+        "a" * 64,
+        operational_memory_dir=tmp_path / "operational",
+        curated_memory_dir=tmp_path / "curated",
+    )
+
+    assert result.status == "refused"
+    assert result.decision == "refused"
+    assert result.persisted is False
+    assert result.case_write_performed is False
+
+
+def test_promote_case_memory_candidate_refuses_stale_fingerprint_before_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.services.case_memory_candidate import (
+        build_case_memory_candidate_fingerprint,
+    )
+
+    service = load_promotion_service()
+
+    candidate = SimpleNamespace(
+        schema_version="case_memory_candidate_v1_5",
+        candidate_id="candidate-1",
+        source_turn_id="turn-1",
+        provenance={
+            "operator_feedback": {
+                "present": True,
+                "record": {"label": "corrected"},
+            }
+        },
+        proposed_case={
+            "case_id": "case-1",
+            "status": "unresolved",
+        },
+        validation=SimpleNamespace(
+            provenance_valid=True,
+            case_valid=True,
+            errors=(),
+            warnings=(),
+        ),
+    )
+
+    current_fingerprint = build_case_memory_candidate_fingerprint(candidate)
+    stale_fingerprint = "a" * 64
+
+    assert current_fingerprint != stale_fingerprint
+
+    monkeypatch.setattr(
+        service,
+        "preview_case_memory_candidate",
+        lambda *args, **kwargs: SimpleNamespace(
+            status="ok",
+            candidate=candidate,
+            errors=(),
+            warnings=(),
+        ),
+        raising=False,
+    )
+
+    def forbidden_write(*args, **kwargs):
+        raise AssertionError(
+            "Stale approval must stop before audit or persistence."
+        )
+
+    monkeypatch.setattr(
+        service,
+        "append_case_promotion_audit_event",
+        forbidden_write,
+    )
+    monkeypatch.setattr(
+        service,
+        "save_case_memory",
+        forbidden_write,
+        raising=False,
+    )
+
+    result = service.promote_case_memory_candidate(
+        "turn-1",
+        stale_fingerprint,
+        operational_memory_dir=tmp_path / "operational",
+        curated_memory_dir=tmp_path / "curated",
+    )
+
+    assert result.status == "refused"
+    assert result.decision == "refused"
+    assert result.persisted is False
+    assert result.case_write_performed is False
+    assert "preview" in result.message.lower()

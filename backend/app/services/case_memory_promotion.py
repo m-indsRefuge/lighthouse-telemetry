@@ -22,6 +22,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app.services.case_memory_candidate import (
+    CASE_MEMORY_CANDIDATE_STATUS_OK,
+    build_case_memory_candidate_fingerprint,
+    normalize_case_memory_candidate_fingerprint,
+    preview_case_memory_candidate,
+)
 from app.services.conversational_engine_turn import DEFAULT_MEMORY_DIR
 
 
@@ -205,3 +211,135 @@ def case_records_equivalent(
         existing.pop("schema_version", None)
 
     return existing == proposed
+
+def _refused_promotion_result(
+    *,
+    message: str,
+    source_turn_id: str,
+    candidate_fingerprint: str = "",
+    candidate_id: str = "",
+    case_id: str = "",
+    errors: tuple[str, ...] = (),
+    warnings: tuple[str, ...] = (),
+) -> CaseMemoryPromotionResult:
+    """Build a fail-closed result before the C02 persistence boundary."""
+    return CaseMemoryPromotionResult(
+        status="refused",
+        decision="refused",
+        message=message,
+        source_turn_id=source_turn_id,
+        candidate_id=candidate_id,
+        candidate_fingerprint=candidate_fingerprint,
+        promotion_id="",
+        case_id=case_id,
+        persisted=False,
+        case_write_performed=False,
+        audit_complete=False,
+        errors=errors,
+        warnings=warnings,
+    )
+
+
+def promote_case_memory_candidate(
+    turn_id: str,
+    fingerprint: str,
+    *,
+    operational_memory_dir: str | Path | None = None,
+    curated_memory_dir: str | Path | None = None,
+) -> CaseMemoryPromotionResult:
+    """
+    Validate one explicit exact-fingerprint promotion request.
+
+    This Task 4A implementation deliberately stops before audit or curated
+    persistence. It establishes the fail-closed authority boundary first.
+    """
+    clean_turn_id = turn_id.strip() if isinstance(turn_id, str) else ""
+    normalized_fingerprint = normalize_case_memory_candidate_fingerprint(
+        fingerprint
+    )
+
+    if not clean_turn_id or normalized_fingerprint is None:
+        return _refused_promotion_result(
+            message=(
+                "Case promotion requires an exact conversational turn ID and "
+                "64-character candidate fingerprint."
+            ),
+            source_turn_id=clean_turn_id,
+            candidate_fingerprint=normalized_fingerprint or "",
+            errors=(
+                "turn_id must be non-empty and fingerprint must be exactly "
+                "64 hexadecimal characters.",
+            ),
+        )
+
+    preview = preview_case_memory_candidate(
+        clean_turn_id,
+        memory_dir=operational_memory_dir,
+    )
+
+    if (
+        preview.status != CASE_MEMORY_CANDIDATE_STATUS_OK
+        or preview.candidate is None
+    ):
+        return _refused_promotion_result(
+            message=(
+                "Current case candidate preview is not valid for promotion. "
+                "Re-run case preview before approving."
+            ),
+            source_turn_id=clean_turn_id,
+            candidate_fingerprint=normalized_fingerprint,
+            errors=tuple(preview.errors),
+            warnings=tuple(preview.warnings),
+        )
+
+    candidate = preview.candidate
+    candidate_id = candidate.candidate_id
+    case_id = str(candidate.proposed_case.get("case_id", ""))
+
+    if (
+        not candidate.validation.provenance_valid
+        or not candidate.validation.case_valid
+    ):
+        return _refused_promotion_result(
+            message=(
+                "Current case candidate validation is not valid for promotion. "
+                "Re-run case preview before approving."
+            ),
+            source_turn_id=clean_turn_id,
+            candidate_fingerprint=normalized_fingerprint,
+            candidate_id=candidate_id,
+            case_id=case_id,
+            errors=tuple(candidate.validation.errors),
+            warnings=tuple(candidate.validation.warnings),
+        )
+
+    current_fingerprint = build_case_memory_candidate_fingerprint(candidate)
+
+    if current_fingerprint != normalized_fingerprint:
+        return _refused_promotion_result(
+            message=(
+                "Candidate fingerprint no longer matches the current preview. "
+                "Re-run case preview and approve the new exact fingerprint."
+            ),
+            source_turn_id=clean_turn_id,
+            candidate_fingerprint=normalized_fingerprint,
+            candidate_id=candidate_id,
+            case_id=case_id,
+            errors=(
+                "Approved fingerprint does not match current candidate contents.",
+            ),
+            warnings=tuple(candidate.validation.warnings),
+        )
+
+    # Fail closed until Task 4B adds the audited curated-memory boundary.
+    return _refused_promotion_result(
+        message=(
+            "Exact candidate approval passed validation, but curated case "
+            "persistence is not enabled in this implementation slice."
+        ),
+        source_turn_id=clean_turn_id,
+        candidate_fingerprint=normalized_fingerprint,
+        candidate_id=candidate_id,
+        case_id=case_id,
+        warnings=tuple(candidate.validation.warnings),
+    )
