@@ -432,10 +432,30 @@ def promote_case_memory_candidate(
         ),
     )
 
-    append_case_promotion_audit_event(
-        attempt_event,
-        memory_dir=operational_memory_dir,
-    )
+    try:
+        append_case_promotion_audit_event(
+            attempt_event,
+            memory_dir=operational_memory_dir,
+        )
+    except OSError as error:
+        return CaseMemoryPromotionResult(
+            status="error",
+            decision="error",
+            message=(
+                "Promotion audit attempt could not be recorded; "
+                "curated case was not written."
+            ),
+            source_turn_id=clean_turn_id,
+            candidate_id=candidate_id,
+            candidate_fingerprint=normalized_fingerprint,
+            promotion_id=promotion_id,
+            case_id=case_id,
+            persisted=False,
+            case_write_performed=False,
+            audit_complete=False,
+            errors=(str(error),),
+            warnings=tuple(case_validation.warnings),
+        )
 
     if persistence_decision == "duplicate":
         outcome_event = build_case_promotion_audit_event(
@@ -526,10 +546,48 @@ def promote_case_memory_candidate(
     )
 
     if save_result.status != MEMORY_MANAGER_STATUS_OK:
+        error_outcome_event = build_case_promotion_audit_event(
+            promotion_id=promotion_id,
+            source_turn_id=clean_turn_id,
+            candidate_id=candidate_id,
+            candidate_fingerprint=normalized_fingerprint,
+            case_id=case_id,
+            event_type="outcome",
+            decision="error",
+            persisted=False,
+            case_write_performed=False,
+            reason=(
+                "Curated case persistence failed after the audited "
+                "promotion attempt."
+            ),
+        )
+
+        audit_complete = True
+        audit_errors: tuple[str, ...] = ()
+
+        try:
+            append_case_promotion_audit_event(
+                error_outcome_event,
+                memory_dir=operational_memory_dir,
+            )
+        except OSError as error:
+            audit_complete = False
+            audit_errors = (
+                f"Promotion error outcome audit failed: {error}",
+            )
+
         return CaseMemoryPromotionResult(
             status="error",
             decision="error",
-            message="Curated case persistence did not complete.",
+            message=(
+                "Curated case persistence failed; error outcome was "
+                "recorded."
+                if audit_complete
+                else (
+                    "Curated case persistence failed and the error "
+                    "outcome audit also failed."
+                )
+            ),
             source_turn_id=clean_turn_id,
             candidate_id=candidate_id,
             candidate_fingerprint=normalized_fingerprint,
@@ -537,9 +595,12 @@ def promote_case_memory_candidate(
             case_id=case_id,
             persisted=False,
             case_write_performed=False,
-            audit_complete=False,
-            errors=tuple(save_result.errors),
-            warnings=tuple(save_result.warnings),
+            audit_complete=audit_complete,
+            errors=tuple(save_result.errors) + audit_errors,
+            warnings=(
+                tuple(case_validation.warnings)
+                + tuple(save_result.warnings)
+            ),
         )
 
     outcome_event = build_case_promotion_audit_event(
@@ -555,10 +616,30 @@ def promote_case_memory_candidate(
         reason="Exact approved case was appended to curated CaseMemory.",
     )
 
-    append_case_promotion_audit_event(
-        outcome_event,
-        memory_dir=operational_memory_dir,
-    )
+    try:
+        append_case_promotion_audit_event(
+            outcome_event,
+            memory_dir=operational_memory_dir,
+        )
+    except OSError as error:
+        return CaseMemoryPromotionResult(
+            status="partial",
+            decision="promoted",
+            message=(
+                "Exact approved case was persisted, but the final "
+                "promotion outcome audit could not be recorded."
+            ),
+            source_turn_id=clean_turn_id,
+            candidate_id=candidate_id,
+            candidate_fingerprint=normalized_fingerprint,
+            promotion_id=promotion_id,
+            case_id=case_id,
+            persisted=True,
+            case_write_performed=True,
+            audit_complete=False,
+            errors=(str(error),),
+            warnings=tuple(case_validation.warnings),
+        )
 
     return CaseMemoryPromotionResult(
         status="ok",

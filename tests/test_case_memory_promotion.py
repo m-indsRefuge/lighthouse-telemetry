@@ -735,3 +735,249 @@ def test_promotion_revalidates_proposed_case_before_persistence(
         tmp_path / "operational"
     ).exists()
     assert not (tmp_path / "curated" / "cases.jsonl").exists()
+
+# === C02 TASK 4C: PROMOTION FAILURE SEMANTICS ===
+
+
+def test_attempt_audit_failure_blocks_case_write_and_returns_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = load_promotion_service()
+    candidate, fingerprint, preview = build_task4_valid_candidate()
+
+    monkeypatch.setattr(
+        service,
+        "preview_case_memory_candidate",
+        lambda *args, **kwargs: preview,
+    )
+
+    def failing_audit(*args, **kwargs):
+        raise OSError("forced attempt audit failure")
+
+    def forbidden_save(*args, **kwargs):
+        raise AssertionError(
+            "Curated save must not run when ATTEMPT audit fails."
+        )
+
+    monkeypatch.setattr(
+        service,
+        "append_case_promotion_audit_event",
+        failing_audit,
+    )
+    monkeypatch.setattr(
+        service,
+        "save_case_memory",
+        forbidden_save,
+    )
+
+    result = service.promote_case_memory_candidate(
+        candidate.source_turn_id,
+        fingerprint,
+        operational_memory_dir=tmp_path / "operational",
+        curated_memory_dir=tmp_path / "curated",
+    )
+
+    assert result.status == "error"
+    assert result.decision == "error"
+    assert result.persisted is False
+    assert result.case_write_performed is False
+    assert result.audit_complete is False
+
+    assert not (tmp_path / "curated" / "cases.jsonl").exists()
+
+
+def test_case_save_failure_records_error_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    service = load_promotion_service()
+    candidate, fingerprint, preview = build_task4_valid_candidate()
+
+    events: list[dict] = []
+
+    monkeypatch.setattr(
+        service,
+        "preview_case_memory_candidate",
+        lambda *args, **kwargs: preview,
+    )
+    monkeypatch.setattr(
+        service,
+        "append_case_promotion_audit_event",
+        lambda event, **kwargs: events.append(event),
+    )
+    monkeypatch.setattr(
+        service,
+        "save_case_memory",
+        lambda *args, **kwargs: SimpleNamespace(
+            status="error",
+            errors=("forced curated save failure",),
+            warnings=(),
+        ),
+    )
+
+    result = service.promote_case_memory_candidate(
+        candidate.source_turn_id,
+        fingerprint,
+        operational_memory_dir=tmp_path / "operational",
+        curated_memory_dir=tmp_path / "curated",
+    )
+
+    assert result.status == "error"
+    assert result.decision == "error"
+    assert result.persisted is False
+    assert result.case_write_performed is False
+    assert result.audit_complete is True
+
+    assert [event["event_type"] for event in events] == [
+        "attempt",
+        "outcome",
+    ]
+    assert [event["decision"] for event in events] == [
+        "attempting",
+        "error",
+    ]
+    assert events[-1]["persisted"] is False
+    assert events[-1]["case_write_performed"] is False
+
+
+def test_outcome_audit_failure_after_case_write_returns_partial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.memory_store import read_case_memories
+
+    service = load_promotion_service()
+    candidate, fingerprint, preview = build_task4_valid_candidate()
+
+    curated_dir = tmp_path / "curated"
+    audit_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        service,
+        "preview_case_memory_candidate",
+        lambda *args, **kwargs: preview,
+    )
+
+    def fail_outcome_audit(event, **kwargs):
+        audit_calls.append(event)
+
+        if event["event_type"] == "outcome":
+            raise OSError("forced final outcome audit failure")
+
+    monkeypatch.setattr(
+        service,
+        "append_case_promotion_audit_event",
+        fail_outcome_audit,
+    )
+
+    result = service.promote_case_memory_candidate(
+        candidate.source_turn_id,
+        fingerprint,
+        operational_memory_dir=tmp_path / "operational",
+        curated_memory_dir=curated_dir,
+    )
+
+    assert result.status == "partial"
+    assert result.decision == "promoted"
+    assert result.persisted is True
+    assert result.case_write_performed is True
+    assert result.audit_complete is False
+
+    stored = read_case_memories(
+        limit=None,
+        memory_dir=curated_dir,
+    )
+
+    assert len(stored.data["entries"]) == 1
+    assert service.case_records_equivalent(
+        stored.data["entries"][0],
+        candidate.proposed_case,
+    )
+
+    assert [event["event_type"] for event in audit_calls] == [
+        "attempt",
+        "outcome",
+    ]
+
+
+def test_retry_after_partial_is_duplicate_without_second_case_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.memory_store import read_case_memories
+
+    service = load_promotion_service()
+    candidate, fingerprint, preview = build_task4_valid_candidate()
+
+    operational_dir = tmp_path / "operational"
+    curated_dir = tmp_path / "curated"
+
+    monkeypatch.setattr(
+        service,
+        "preview_case_memory_candidate",
+        lambda *args, **kwargs: preview,
+    )
+
+    original_append = service.append_case_promotion_audit_event
+    fail_first_outcome = {"remaining": 1}
+
+    def fail_once_then_append(event, **kwargs):
+        if (
+            event["event_type"] == "outcome"
+            and fail_first_outcome["remaining"] > 0
+        ):
+            fail_first_outcome["remaining"] -= 1
+            raise OSError("forced one-time outcome audit failure")
+
+        return original_append(event, **kwargs)
+
+    monkeypatch.setattr(
+        service,
+        "append_case_promotion_audit_event",
+        fail_once_then_append,
+    )
+
+    first = service.promote_case_memory_candidate(
+        candidate.source_turn_id,
+        fingerprint,
+        operational_memory_dir=operational_dir,
+        curated_memory_dir=curated_dir,
+    )
+
+    assert first.status == "partial"
+    assert first.persisted is True
+    assert first.case_write_performed is True
+    assert first.audit_complete is False
+
+    second = service.promote_case_memory_candidate(
+        candidate.source_turn_id,
+        fingerprint,
+        operational_memory_dir=operational_dir,
+        curated_memory_dir=curated_dir,
+    )
+
+    assert second.status == "duplicate"
+    assert second.decision == "duplicate"
+    assert second.persisted is True
+    assert second.case_write_performed is False
+    assert second.audit_complete is True
+
+    stored = read_case_memories(
+        limit=None,
+        memory_dir=curated_dir,
+    )
+
+    assert len(stored.data["entries"]) == 1
+
+    audit = service.read_case_promotion_audit_events(
+        memory_dir=operational_dir,
+    )
+
+    assert [event["decision"] for event in audit] == [
+        "attempting",
+        "attempting",
+        "duplicate",
+    ]
