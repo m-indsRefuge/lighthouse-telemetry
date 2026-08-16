@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import sys
+from copy import deepcopy
 from collections.abc import Callable
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
 
 
+from app.services import case_memory_candidate as candidate_service
 from app.services.case_memory_candidate import (
     CASE_MEMORY_CANDIDATE_SCHEMA_VERSION,
     CaseMemoryCandidate,
@@ -685,3 +687,190 @@ def test_preview_report_states_preview_only_and_no_side_effects(tmp_path: Path) 
     assert "No case memory was written." in report
     assert "No tool was executed." in report
     assert "No model was called." in report
+
+# === C02 TASK 1: CANDIDATE FINGERPRINT TESTS ===
+
+
+def test_candidate_fingerprint_is_stable_for_same_candidate(
+    tmp_path: Path,
+) -> None:
+    source_turn = record_turn(tmp_path, use_model=True)
+    result = preview_case_memory_candidate(
+        source_turn["turn_id"],
+        memory_dir=tmp_path,
+    )
+
+    assert result.candidate is not None
+
+    first = candidate_service.build_case_memory_candidate_fingerprint(
+        result.candidate
+    )
+    second = candidate_service.build_case_memory_candidate_fingerprint(
+        result.candidate
+    )
+
+    assert first == second
+    assert len(first) == 64
+    assert first == first.lower()
+
+
+def test_candidate_fingerprint_changes_when_operator_feedback_changes(
+    tmp_path: Path,
+) -> None:
+    source_turn = record_turn(tmp_path)
+
+    before = preview_case_memory_candidate(
+        source_turn["turn_id"],
+        memory_dir=tmp_path,
+    )
+    assert before.candidate is not None
+
+    fingerprint_a = candidate_service.build_case_memory_candidate_fingerprint(
+        before.candidate
+    )
+
+    feedback_result = record_turn_feedback(
+        turn_id=source_turn["turn_id"],
+        label="corrected",
+        note="Operator correction changes promotion-relevant evidence.",
+        memory_dir=tmp_path,
+    )
+
+    assert feedback_result["status"] == "ok"
+
+    after = preview_case_memory_candidate(
+        source_turn["turn_id"],
+        memory_dir=tmp_path,
+    )
+    assert after.candidate is not None
+
+    fingerprint_b = candidate_service.build_case_memory_candidate_fingerprint(
+        after.candidate
+    )
+
+    assert fingerprint_b != fingerprint_a
+
+
+def test_candidate_fingerprint_changes_when_provenance_changes(
+    tmp_path: Path,
+) -> None:
+    source_turn = record_turn(tmp_path)
+    result = preview_case_memory_candidate(
+        source_turn["turn_id"],
+        memory_dir=tmp_path,
+    )
+
+    assert result.candidate is not None
+    candidate = result.candidate
+
+    provenance = deepcopy(candidate.provenance)
+    provenance["dataset_classification"]["category"] = "changed_for_test"
+
+    changed = replace(candidate, provenance=provenance)
+
+    assert (
+        candidate_service.build_case_memory_candidate_fingerprint(changed)
+        != candidate_service.build_case_memory_candidate_fingerprint(candidate)
+    )
+
+
+def test_candidate_fingerprint_changes_when_proposed_case_changes(
+    tmp_path: Path,
+) -> None:
+    source_turn = record_turn(tmp_path)
+    result = preview_case_memory_candidate(
+        source_turn["turn_id"],
+        memory_dir=tmp_path,
+    )
+
+    assert result.candidate is not None
+    candidate = result.candidate
+
+    proposed_case = deepcopy(candidate.proposed_case)
+    proposed_case["case_card"]["lesson"] = "Changed promotion-relevant case content."
+
+    changed = replace(candidate, proposed_case=proposed_case)
+
+    assert (
+        candidate_service.build_case_memory_candidate_fingerprint(changed)
+        != candidate_service.build_case_memory_candidate_fingerprint(candidate)
+    )
+
+
+def test_candidate_fingerprint_ignores_derived_preview_fields(
+    tmp_path: Path,
+) -> None:
+    source_turn = record_turn(tmp_path)
+    result = preview_case_memory_candidate(
+        source_turn["turn_id"],
+        memory_dir=tmp_path,
+    )
+
+    assert result.candidate is not None
+    candidate = result.candidate
+
+    changed_validation = replace(
+        candidate.validation,
+        provenance_valid=not candidate.validation.provenance_valid,
+        case_valid=not candidate.validation.case_valid,
+        errors=("derived validation changed",),
+        warnings=("derived warning changed",),
+    )
+
+    changed = replace(
+        candidate,
+        validation=changed_validation,
+        promotion={
+            "preview_only": False,
+            "persisted": True,
+            "operator_approval_required": False,
+        },
+        safety={
+            "model_authority": True,
+            "tool_execution": True,
+            "os_mutation": True,
+            "memory_write": True,
+        },
+    )
+
+    assert (
+        candidate_service.build_case_memory_candidate_fingerprint(changed)
+        == candidate_service.build_case_memory_candidate_fingerprint(candidate)
+    )
+
+
+def test_fingerprint_normalization_requires_exact_sha256_hex() -> None:
+    normalize = candidate_service.normalize_case_memory_candidate_fingerprint
+
+    assert normalize("A" * 64) == "a" * 64
+    assert normalize("a" * 63) is None
+    assert normalize("a" * 65) is None
+    assert normalize("g" * 64) is None
+    assert normalize("") is None
+
+
+def test_preview_report_displays_candidate_fingerprint_and_exact_approval_command(
+    tmp_path: Path,
+) -> None:
+    source_turn = record_turn(tmp_path)
+    result = preview_case_memory_candidate(
+        source_turn["turn_id"],
+        memory_dir=tmp_path,
+    )
+
+    assert result.candidate is not None
+
+    expected_fingerprint = (
+        candidate_service.build_case_memory_candidate_fingerprint(
+            result.candidate
+        )
+    )
+
+    report = format_case_memory_candidate_preview_report(result)
+
+    assert f"Candidate fingerprint: {expected_fingerprint}" in report
+    assert "To approve this exact candidate:" in report
+    assert (
+        f"case approve {source_turn['turn_id']} {expected_fingerprint}"
+        in report
+    )
