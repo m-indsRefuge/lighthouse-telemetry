@@ -981,3 +981,73 @@ def test_retry_after_partial_is_duplicate_without_second_case_write(
         "attempting",
         "duplicate",
     ]
+
+# === C02 PROMOTION RESULT FORMATTER ===
+
+
+def test_format_case_memory_promotion_result_surfaces_truth_fields() -> None:
+    service = load_promotion_service()
+
+    result = service.CaseMemoryPromotionResult(
+        status="ok",
+        decision="promoted",
+        message="Exact approved case was promoted to curated memory.",
+        source_turn_id="turn-1",
+        candidate_id="candidate-1",
+        candidate_fingerprint="a" * 64,
+        promotion_id="promotion-1",
+        case_id="case-1",
+        persisted=True,
+        case_write_performed=True,
+        audit_complete=True,
+    )
+
+    report = service.format_case_memory_promotion_result(result)
+
+    assert "LIGHTHOUSE CASE PROMOTION" in report
+    assert "Status: ok" in report
+    assert "Decision: promoted" in report
+    assert "Source turn: turn-1" in report
+    assert "Candidate ID: candidate-1" in report
+    assert f"Candidate fingerprint: {'a' * 64}" in report
+    assert "Promotion ID: promotion-1" in report
+    assert "Case ID: case-1" in report
+    assert "Persisted: yes" in report
+    assert "Case write performed: yes" in report
+    assert "Audit complete: yes" in report
+    assert "Exact approved case was promoted to curated memory." in report
+
+
+def test_format_case_memory_promotion_result_surfaces_partial_and_errors() -> None:
+    service = load_promotion_service()
+
+    result = service.CaseMemoryPromotionResult(
+        status="partial",
+        decision="promoted",
+        message=(
+            "Exact approved case was persisted, but the final "
+            "promotion outcome audit could not be recorded."
+        ),
+        source_turn_id="turn-2",
+        candidate_id="candidate-2",
+        candidate_fingerprint="b" * 64,
+        promotion_id="promotion-2",
+        case_id="case-2",
+        persisted=True,
+        case_write_performed=True,
+        audit_complete=False,
+        errors=("forced final outcome audit failure",),
+        warnings=("review audit journal",),
+    )
+
+    report = service.format_case_memory_promotion_result(result)
+
+    assert "Status: partial" in report
+    assert "Decision: promoted" in report
+    assert "Persisted: yes" in report
+    assert "Case write performed: yes" in report
+    assert "Audit complete: no" in report
+    assert "Errors:" in report
+    assert "- forced final outcome audit failure" in report
+    assert "Warnings:" in report
+    assert "- review audit journal" in report

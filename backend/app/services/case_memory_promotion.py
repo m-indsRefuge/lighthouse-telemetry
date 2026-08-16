@@ -655,3 +655,54 @@ def promote_case_memory_candidate(
         audit_complete=True,
         warnings=tuple(case_validation.warnings),
     )
+
+def format_case_memory_promotion_result(
+    result: CaseMemoryPromotionResult,
+) -> str:
+    """Format one truthful Operator-visible C02 promotion result."""
+
+    def yes_no(value: bool) -> str:
+        return "yes" if value else "no"
+
+    lines = [
+        "LIGHTHOUSE CASE PROMOTION",
+        "=" * 60,
+        f"Status: {result.status}",
+        f"Decision: {result.decision}",
+        f"Message: {result.message}",
+        "",
+        f"Source turn: {result.source_turn_id or 'unavailable'}",
+        f"Candidate ID: {result.candidate_id or 'unavailable'}",
+        (
+            "Candidate fingerprint: "
+            f"{result.candidate_fingerprint or 'unavailable'}"
+        ),
+        f"Promotion ID: {result.promotion_id or 'unavailable'}",
+        f"Case ID: {result.case_id or 'unavailable'}",
+        "",
+        f"Persisted: {yes_no(result.persisted)}",
+        f"Case write performed: {yes_no(result.case_write_performed)}",
+        f"Audit complete: {yes_no(result.audit_complete)}",
+    ]
+
+    if result.warnings:
+        lines.extend(
+            [
+                "",
+                "Warnings:",
+                *(f"- {warning}" for warning in result.warnings),
+            ]
+        )
+
+    if result.errors:
+        lines.extend(
+            [
+                "",
+                "Errors:",
+                *(f"- {error}" for error in result.errors),
+            ]
+        )
+
+    lines.append("=" * 60)
+
+    return "\n".join(lines)
