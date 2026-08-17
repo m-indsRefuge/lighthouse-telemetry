@@ -82,7 +82,7 @@ A reusable orchestration service that:
 7. evaluates trust invariants,
 8. emits one `MemoryLabCycleResult`.
 
-The laboratory service must never write curated memory directly.
+The laboratory service must never write curated memory directly during the measured action under test.
 
 ### 4.2 `memory_lab_scenarios.py`
 
@@ -107,7 +107,27 @@ For stale scenarios it deliberately submits an old fingerprint after evidence ch
 
 It receives no direct low-level store writer.
 
-### 4.4 Campaign runner
+### 4.4 Isolated fixture/precondition builder
+
+Some negative scenarios require pre-existing state that cannot be produced by the normal C02 authority path without changing the thing being tested. The canonical example is a same-`case_id`, different-content conflict.
+
+A dedicated test-only fixture builder may seed **isolated campaign directories only** before the measured cycle begins.
+
+Rules:
+
+- fixture writes are allowed only for explicit scenario preconditions,
+- fixture writes must never target normal Lighthouse operational or curated memory,
+- the fixture builder is not available to the test Operator simulator,
+- the measured promotion action must still pass through the real C02 promotion service,
+- every seeded case/record is declared in the scenario and recorded in cycle evidence,
+- fixture writes are excluded from `case_write_performed` for the measured action but included in before/after physical store counts,
+- fixture seeding must not be used for ordinary promotion, duplicate replay, or stale-approval scenarios where the real production path can create the required state.
+
+Controlled failure scenarios may also install test-only dependency failures at named C02 boundaries (for example audit append or curated save). Each injected failure must be declared in scenario evidence. These injections test C02 failure semantics; they do not create production failure controls.
+
+This fixture boundary exists only to construct adversarial preconditions. It does not relax production persistence authority.
+
+### 4.5 Campaign runner
 
 A developer-only runner, expected shape:
 
@@ -189,6 +209,8 @@ Assertions include:
 - physical curated case count does not increase,
 - duplicate attempt/outcome audit is present.
 
+The pre-existing equivalent case for this family must be created through the real C02 path, not fixture seeding.
+
 ### 6.3 Stale evidence
 
 Preview candidate → introduce deterministic Operator feedback/evidence change → submit old fingerprint.
@@ -202,7 +224,7 @@ Assertions include:
 
 ### 6.4 Conflict protection
 
-Same `case_id` already exists with different meaningful CaseMemory content.
+A fixture precondition creates one isolated stored case whose `case_id` matches the candidate but whose meaningful CaseMemory content differs. The measured action then submits the exact current candidate through the real C02 promotion gate.
 
 Assertions include:
 
@@ -215,6 +237,8 @@ Assertions include:
 
 Populate isolated curated memory with controlled relevant and irrelevant cases, then query through the real memory retriever.
 
+Where the cases under test can be created through normal C02 promotion, that path is preferred. Fixture seeding is allowed only for retrieval-specific preconditions that are explicitly declared and are not themselves being used to test promotion correctness.
+
 Assertions include:
 
 - designated relevant case appears within the configured deterministic retrieval window,
@@ -223,7 +247,7 @@ Assertions include:
 
 ### 6.6 Controlled failure integrity
 
-Inject known audit/store failures at controlled boundaries.
+Install a declared test-only failure at a named persistence/audit dependency, then drive the measured approval through the real C02 service.
 
 Assertions include C02 truth semantics:
 
@@ -234,11 +258,42 @@ Assertions include C02 truth semantics:
 
 ## 7. Scenario distribution
 
-The formal 1,000-cycle campaign uses fixed quotas so edge cases cannot disappear through random sampling.
+Formal campaigns use fixed quotas so edge cases cannot disappear through random sampling.
 
-Initial C03 quotas:
+The canonical family ordering is:
 
-- 400 normal promotion/retrieval cycles,
+1. normal promotion,
+2. duplicate replay,
+3. stale evidence,
+4. conflict protection,
+5. retrieval discrimination,
+6. controlled failure integrity.
+
+### 7.1 50-cycle smoke quotas
+
+- 20 normal promotion cycles,
+- 10 duplicate replay cycles,
+- 8 stale-evidence cycles,
+- 5 conflict cycles,
+- 5 retrieval-discrimination cycles,
+- 2 controlled failure-injection cycles.
+
+Total: 50 cycles.
+
+### 7.2 250-cycle validation quotas
+
+- 100 normal promotion cycles,
+- 50 duplicate replay cycles,
+- 38 stale-evidence cycles,
+- 25 conflict cycles,
+- 25 retrieval-discrimination cycles,
+- 12 controlled failure-injection cycles.
+
+Total: 250 cycles.
+
+### 7.3 1,000-cycle acceptance quotas
+
+- 400 normal promotion cycles,
 - 200 duplicate replay cycles,
 - 150 stale-evidence cycles,
 - 100 conflict cycles,
@@ -247,9 +302,11 @@ Initial C03 quotas:
 
 Total: 1,000 cycles.
 
-The seed determines the deterministic order and scenario details within those quotas. The same C03 version + seed + cycle count must reproduce the same logical campaign expectations.
+Development runs of 1–10 cycles use a deterministic round-robin over the canonical family ordering and are not formal acceptance evidence.
 
-Production-required timestamps/UUIDs need not be byte-identical across runs; expected decisions, scenario inputs, case-domain content, and invariant outcomes must be reproducible.
+The seed determines the deterministic order and scenario details within the applicable quota set. The same C03 version + seed + formal cycle count must reproduce the same logical campaign expectations.
+
+Production-required timestamps/UUIDs need not be byte-identical across runs; expected decisions, scenario inputs, case-domain content, fixture declarations, and invariant outcomes must be reproducible.
 
 ## 8. Cycle result contract
 
@@ -266,19 +323,21 @@ Minimum fields:
 7. source_turn_id
 8. candidate_id
 9. candidate_fingerprints
-10. expected_decision
-11. actual_decision
-12. expected_persisted
-13. actual_persisted
-14. case_count_before
-15. case_count_after
-16. audit_count_before
-17. audit_count_after
-18. retrieval_expected_case_id
-19. retrieval_observed_case_ids
-20. passed
-21. errors
-22. warnings
+10. fixture_case_ids
+11. injected_failure
+12. expected_decision
+13. actual_decision
+14. expected_persisted
+15. actual_persisted
+16. case_count_before
+17. case_count_after
+18. audit_count_before
+19. audit_count_after
+20. retrieval_expected_case_id
+21. retrieval_observed_case_ids
+22. passed
+23. errors
+24. warnings
 
 The contract must capture facts rather than infer success from a service status alone.
 
@@ -297,6 +356,7 @@ Example: a `duplicate` decision passes only if the curated physical case count a
 - passed_cycles,
 - failed_cycles,
 - curated_case_count,
+- fixture_write_count,
 - promotion attempt/outcome counts,
 - stale refusals,
 - duplicate decisions,
@@ -324,9 +384,10 @@ The formal C03 acceptance campaign has no yellow/partial-success state.
 
 A formal campaign requires:
 
-- zero unexpected curated case writes,
+- zero unexpected curated case writes during measured actions,
+- zero undeclared fixture writes,
 - zero stale approvals accepted,
-- zero physical duplicate cases,
+- zero physical duplicate cases except explicitly declared fixture state that is itself under a corruption-detection test,
 - zero conflict overwrites,
 - 100% expected promotion-audit consistency,
 - 100% required retrieval assertions,
@@ -341,7 +402,8 @@ Expected `refused`, `duplicate`, `conflict`, `error`, or `partial` outcomes may 
 
 Formal campaigns stop immediately on:
 
-- unexpected curated persistence,
+- unexpected curated persistence during a measured action,
+- undeclared fixture persistence,
 - stale fingerprint accepted,
 - forbidden model/tool/OS/generic-policy call,
 - corrupted/unreadable campaign store where truth cannot be established,
@@ -362,8 +424,10 @@ The laboratory must prove that it can detect defects before its soak result is t
 Required harness tests include:
 
 - same seed/version produces repeatable logical scenario sequence,
-- fixed family quotas are exact,
+- 50/250/1,000 formal family quotas are exact,
 - test Operator cannot bypass C02 persistence,
+- fixture builder cannot target non-campaign memory paths,
+- fixture activity is declared and distinguishable from measured action writes,
 - each scenario family detects an intentionally introduced mismatch,
 - unexpected-write detector fails a corrupted scenario,
 - stale-acceptance detector fails when stale persistence is forced,
@@ -387,7 +451,7 @@ Primary acceptance       1,000 cycles
 Optional durability      5,000 cycles
 ```
 
-The 5,000-cycle durability run does not block C03 completion. It may be run after C03 acceptance to inform later lifecycle work.
+The 5,000-cycle durability run does not block C03 completion. If run, it uses a separately versioned quota policy derived from the accepted C03 family distribution rather than silently reusing an unspecified allocation.
 
 ## 14. Formal C03 completion gate
 
@@ -398,7 +462,8 @@ LH-V1.5-C03 is complete only when all are true:
 - 50-cycle campaign GREEN,
 - 250-cycle campaign GREEN,
 - 1,000-cycle fail-fast campaign GREEN,
-- unexpected writes = 0,
+- unexpected measured-action writes = 0,
+- undeclared fixture writes = 0,
 - stale approvals accepted = 0,
 - physical duplicates = 0,
 - conflict overwrites = 0,
