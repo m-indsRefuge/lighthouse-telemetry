@@ -13,11 +13,11 @@ It does not itself persist curated case memory.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -38,7 +38,6 @@ from app.services.memory_store import (
     MEMORY_STORE_STATUS_OK,
     read_case_memories,
 )
-
 
 CASE_PROMOTION_AUDIT_SCHEMA_VERSION = 1
 CASE_PROMOTION_POLICY_VERSION = "case_promotion_v1_5"
@@ -278,8 +277,8 @@ def promote_case_memory_candidate(
             source_turn_id=clean_turn_id,
             candidate_fingerprint=normalized_fingerprint or "",
             errors=(
-                "turn_id must be non-empty and fingerprint must be exactly "
-                "64 hexadecimal characters.",
+                ("turn_id must be non-empty and fingerprint must be exactly "
+                "64 hexadecimal characters."),
             ),
         )
 

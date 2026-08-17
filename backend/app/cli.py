@@ -9,9 +9,6 @@ from typing import Any
 
 from app.collectors.event_logs import get_recent_system_events
 from app.collectors.windows.cim import collect_windows_cim_evidence
-from app.services.windows_diagnostic_findings import build_windows_diagnostic_findings
-from app.services.windows_evidence_aggregator import collect_windows_evidence
-from app.services.windows_evidence_report import format_windows_evidence_report
 from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
 from app.services.action_journal import (
@@ -19,72 +16,6 @@ from app.services.action_journal import (
     read_journal_entries,
 )
 from app.services.assistant import classify_user_intent
-from app.services.confirmation_gate import (
-    build_confirmation_request,
-    format_confirmation_request,
-)
-from app.services.confirmation_journal import record_target_confirmation_preview
-from app.services.explanation_composer import compose_engine_explanation
-from app.services.insights import build_system_insight, format_insight_report
-from app.services.operator_interaction_journal import (
-    format_feedback_labels_report,
-    format_operator_feedback_result,
-    format_operator_interactions_report,
-    record_operator_feedback,
-    record_operator_interaction,
-)
-from app.services.operator_dataset_export import (
-    export_operator_route_dataset,
-    format_operator_dataset_export_report,
-)
-from app.services.llm_preview_dataset_export import (
-    export_llm_preview_dataset,
-    format_llm_preview_dataset_export_report,
-)
-from app.services.conversation_turn_dataset_export import (
-    export_conversational_turn_dataset,
-    format_conversational_turn_dataset_export_report,
-    format_conversational_turn_dataset_review_report,
-)
-from app.services.operator_routes import (
-    build_operator_routes_report,
-    validate_route_handoff_for_autorun,
-)
-from app.services.operator_conversation import (
-    format_operator_response,
-    interpret_operator_input,
-)
-from app.services.lighthouse_engine import (
-    LighthouseEngineResult,
-    run_lighthouse_engine,
-)
-from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
-from app.services.llm_route_engine import build_llm_route_call
-from app.services.llm_preview_journal import (
-    format_llm_route_previews_report,
-    record_llm_route_preview,
-)
-from app.services.llm_conversation_preview import (
-    build_llm_conversation_preview,
-    format_llm_conversation_preview_report,
-)
-from app.services.conversational_engine_turn import (
-    build_conversational_engine_turn,
-    format_conversational_engine_turn_report,
-    format_conversational_engine_turns_report,
-    read_conversational_engine_turns,
-)
-from app.services.llm_preview_feedback import (
-    format_llm_preview_feedback_result,
-    format_preview_feedback_labels_report,
-    record_llm_preview_feedback,
-)
-from app.services.conversation_turn_feedback import (
-    format_turn_feedback_labels_report,
-    format_turn_feedback_report,
-    format_turn_feedback_result,
-    record_turn_feedback,
-)
 from app.services.case_memory_candidate import (
     format_case_memory_candidate_preview_report,
     normalize_case_memory_candidate_fingerprint,
@@ -94,7 +25,77 @@ from app.services.case_memory_promotion import (
     format_case_memory_promotion_result,
     promote_case_memory_candidate,
 )
-from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
+from app.services.confirmation_gate import (
+    build_confirmation_request,
+    format_confirmation_request,
+)
+from app.services.confirmation_journal import record_target_confirmation_preview
+from app.services.conversation_turn_dataset_export import (
+    export_conversational_turn_dataset,
+    format_conversational_turn_dataset_export_report,
+    format_conversational_turn_dataset_review_report,
+)
+from app.services.conversation_turn_feedback import (
+    format_turn_feedback_labels_report,
+    format_turn_feedback_report,
+    format_turn_feedback_result,
+    record_turn_feedback,
+)
+from app.services.conversational_engine_turn import (
+    build_conversational_engine_turn,
+    format_conversational_engine_turn_report,
+    format_conversational_engine_turns_report,
+    read_conversational_engine_turns,
+)
+from app.services.explanation_composer import compose_engine_explanation
+from app.services.insights import build_system_insight, format_insight_report
+from app.services.lighthouse_engine import (
+    LighthouseEngineResult,
+    run_lighthouse_engine,
+)
+from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
+from app.services.llm_conversation_preview import (
+    build_llm_conversation_preview,
+    format_llm_conversation_preview_report,
+)
+from app.services.llm_preview_dataset_export import (
+    export_llm_preview_dataset,
+    format_llm_preview_dataset_export_report,
+)
+from app.services.llm_preview_feedback import (
+    format_llm_preview_feedback_result,
+    format_preview_feedback_labels_report,
+    record_llm_preview_feedback,
+)
+from app.services.llm_preview_journal import (
+    format_llm_route_previews_report,
+    record_llm_route_preview,
+)
+from app.services.llm_route_engine import build_llm_route_call
+from app.services.operator_conversation import (
+    format_operator_response,
+    interpret_operator_input,
+)
+from app.services.operator_dataset_export import (
+    export_operator_route_dataset,
+    format_operator_dataset_export_report,
+)
+from app.services.operator_interaction_journal import (
+    format_feedback_labels_report,
+    format_operator_feedback_result,
+    format_operator_interactions_report,
+    record_operator_feedback,
+    record_operator_interaction,
+)
+from app.services.operator_routes import (
+    build_operator_routes_report,
+    validate_route_handoff_for_autorun,
+)
+from app.services.snapshot_store import (
+    get_latest_snapshot,
+    list_snapshots,
+    save_snapshot,
+)
 from app.services.target_resolver import (
     TARGET_STATUS_CANDIDATE_FOUND,
     format_target_resolution,
@@ -102,6 +103,9 @@ from app.services.target_resolver import (
 )
 from app.services.tool_executor import ToolExecutionResult
 from app.services.tool_planner import ToolPlan, plan_tools_for_request
+from app.services.windows_diagnostic_findings import build_windows_diagnostic_findings
+from app.services.windows_evidence_aggregator import collect_windows_evidence
+from app.services.windows_evidence_report import format_windows_evidence_report
 
 
 def classify_percent(value: Any, warning_at: float, critical_at: float) -> str:

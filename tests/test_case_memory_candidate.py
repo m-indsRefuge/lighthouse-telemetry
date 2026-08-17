@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 import sys
-from copy import deepcopy
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from typing import Any

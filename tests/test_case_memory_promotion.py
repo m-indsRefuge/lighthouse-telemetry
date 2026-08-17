@@ -1051,3 +1051,68 @@ def test_format_case_memory_promotion_result_surfaces_partial_and_errors() -> No
     assert "- forced final outcome audit failure" in report
     assert "Warnings:" in report
     assert "- review audit journal" in report
+def test_promotion_does_not_invoke_model_tool_os_or_generic_memory_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    import subprocess
+
+    import app.services.llm as llm_service
+    import app.services.memory_policy as memory_policy_service
+    import app.services.tool_executor as tool_executor_service
+
+    service = load_promotion_service()
+    candidate, fingerprint, preview = build_task4_valid_candidate()
+
+    operational_dir = tmp_path / "operational"
+    curated_dir = tmp_path / "curated"
+
+    monkeypatch.setattr(
+        service,
+        "preview_case_memory_candidate",
+        lambda *args, **kwargs: preview,
+    )
+
+    def forbidden_side_effect(*args, **kwargs):
+        raise AssertionError(
+            "Controlled case promotion crossed a forbidden authority boundary."
+        )
+
+    monkeypatch.setattr(llm_service, "call_ollama", forbidden_side_effect)
+    monkeypatch.setattr(
+        tool_executor_service,
+        "execute_registered_tool",
+        forbidden_side_effect,
+    )
+    monkeypatch.setattr(
+        tool_executor_service,
+        "execute_tool_plan",
+        forbidden_side_effect,
+    )
+    monkeypatch.setattr(
+        memory_policy_service,
+        "evaluate_memory_candidate",
+        forbidden_side_effect,
+    )
+    monkeypatch.setattr(
+        memory_policy_service,
+        "evaluate_memory_candidate_dict",
+        forbidden_side_effect,
+    )
+    monkeypatch.setattr(subprocess, "run", forbidden_side_effect)
+    monkeypatch.setattr(subprocess, "Popen", forbidden_side_effect)
+    monkeypatch.setattr(os, "system", forbidden_side_effect)
+
+    result = service.promote_case_memory_candidate(
+        candidate.source_turn_id,
+        fingerprint,
+        operational_memory_dir=operational_dir,
+        curated_memory_dir=curated_dir,
+    )
+
+    assert result.status == "ok"
+    assert result.decision == "promoted"
+    assert result.persisted is True
+    assert result.case_write_performed is True
+    assert result.audit_complete is True

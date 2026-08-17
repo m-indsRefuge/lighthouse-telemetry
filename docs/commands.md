@@ -330,3 +330,42 @@ Filters rows from the current exported conversational turn dataset artifact.
 These commands do not regenerate the dataset, rewrite journals, delete memory,
 call a model, execute tools, or mutate the operating system.
 
+## Controlled case promotion (V1.5 C02)
+
+```text
+case preview <turn_id>
+case approve <turn_id> <fingerprint>
+```
+
+`case preview <turn_id>` remains read-only. For a valid candidate it displays
+the deterministic 64-character SHA-256 candidate fingerprint and the exact
+approval command.
+
+`case approve <turn_id> <fingerprint>` is the only C02 CLI promotion route.
+
+Approval requires:
+- one explicit turn id;
+- one exact 64-character hexadecimal fingerprint;
+- approval of the current candidate contents.
+
+There is no `approve latest`, `--yes`, interactive confirmation shortcut, or
+caller-supplied serialized candidate.
+
+At approval time Lighthouse regenerates the candidate from current operational
+evidence and recomputes its fingerprint. A stale fingerprint is refused and the
+Operator must run `case preview` again.
+
+A successful promotion may write only:
+
+```text
+memory/case_promotions.jsonl
+data/memory/cases.jsonl
+```
+
+The first is the append-only promotion audit journal. The second is curated
+CaseMemory.
+
+Operator approval authorizes storage of the exact candidate. It does not grant
+authority to model output, journals, telemetry, dataset classification, or
+generic memory policy, and it does not execute tools or mutate Windows.
+
