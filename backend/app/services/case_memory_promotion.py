@@ -8,7 +8,8 @@ equivalence rules.
 It does not call a model.
 It does not execute tools.
 It does not mutate the operating system.
-It does not itself persist curated case memory.
+It persists curated case memory only after exact Operator approval passes
+deterministic validation and audit gates.
 """
 
 from __future__ import annotations
@@ -260,8 +261,9 @@ def promote_case_memory_candidate(
     """
     Validate one explicit exact-fingerprint promotion request.
 
-    This Task 4A implementation deliberately stops before audit or curated
-    persistence. It establishes the fail-closed authority boundary first.
+    The current candidate is regenerated and independently validated, its
+    fingerprint must exactly match the Operator-supplied approval, and an audit
+    attempt must be recorded before any curated write.
     """
     clean_turn_id = turn_id.strip() if isinstance(turn_id, str) else ""
     normalized_fingerprint = normalize_case_memory_candidate_fingerprint(
