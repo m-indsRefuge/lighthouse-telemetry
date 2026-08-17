@@ -9,9 +9,6 @@ from typing import Any
 
 from app.collectors.event_logs import get_recent_system_events
 from app.collectors.windows.cim import collect_windows_cim_evidence
-from app.services.windows_diagnostic_findings import build_windows_diagnostic_findings
-from app.services.windows_evidence_aggregator import collect_windows_evidence
-from app.services.windows_evidence_report import format_windows_evidence_report
 from app.main import collect_telemetry
 from app.reporting.console_report import print_console_report
 from app.services.action_journal import (
@@ -19,65 +16,24 @@ from app.services.action_journal import (
     read_journal_entries,
 )
 from app.services.assistant import classify_user_intent
+from app.services.case_memory_candidate import (
+    format_case_memory_candidate_preview_report,
+    normalize_case_memory_candidate_fingerprint,
+    preview_case_memory_candidate,
+)
+from app.services.case_memory_promotion import (
+    format_case_memory_promotion_result,
+    promote_case_memory_candidate,
+)
 from app.services.confirmation_gate import (
     build_confirmation_request,
     format_confirmation_request,
 )
 from app.services.confirmation_journal import record_target_confirmation_preview
-from app.services.explanation_composer import compose_engine_explanation
-from app.services.insights import build_system_insight, format_insight_report
-from app.services.operator_interaction_journal import (
-    format_feedback_labels_report,
-    format_operator_feedback_result,
-    format_operator_interactions_report,
-    record_operator_feedback,
-    record_operator_interaction,
-)
-from app.services.operator_dataset_export import (
-    export_operator_route_dataset,
-    format_operator_dataset_export_report,
-)
-from app.services.llm_preview_dataset_export import (
-    export_llm_preview_dataset,
-    format_llm_preview_dataset_export_report,
-)
 from app.services.conversation_turn_dataset_export import (
     export_conversational_turn_dataset,
     format_conversational_turn_dataset_export_report,
     format_conversational_turn_dataset_review_report,
-)
-from app.services.operator_routes import (
-    build_operator_routes_report,
-    validate_route_handoff_for_autorun,
-)
-from app.services.operator_conversation import (
-    format_operator_response,
-    interpret_operator_input,
-)
-from app.services.lighthouse_engine import (
-    LighthouseEngineResult,
-    run_lighthouse_engine,
-)
-from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
-from app.services.llm_route_engine import build_llm_route_call
-from app.services.llm_preview_journal import (
-    format_llm_route_previews_report,
-    record_llm_route_preview,
-)
-from app.services.llm_conversation_preview import (
-    build_llm_conversation_preview,
-    format_llm_conversation_preview_report,
-)
-from app.services.conversational_engine_turn import (
-    build_conversational_engine_turn,
-    format_conversational_engine_turn_report,
-    format_conversational_engine_turns_report,
-    read_conversational_engine_turns,
-)
-from app.services.llm_preview_feedback import (
-    format_llm_preview_feedback_result,
-    format_preview_feedback_labels_report,
-    record_llm_preview_feedback,
 )
 from app.services.conversation_turn_feedback import (
     format_turn_feedback_labels_report,
@@ -85,11 +41,61 @@ from app.services.conversation_turn_feedback import (
     format_turn_feedback_result,
     record_turn_feedback,
 )
-from app.services.case_memory_candidate import (
-    format_case_memory_candidate_preview_report,
-    preview_case_memory_candidate,
+from app.services.conversational_engine_turn import (
+    build_conversational_engine_turn,
+    format_conversational_engine_turn_report,
+    format_conversational_engine_turns_report,
+    read_conversational_engine_turns,
 )
-from app.services.snapshot_store import get_latest_snapshot, list_snapshots, save_snapshot
+from app.services.explanation_composer import compose_engine_explanation
+from app.services.insights import build_system_insight, format_insight_report
+from app.services.lighthouse_engine import (
+    LighthouseEngineResult,
+    run_lighthouse_engine,
+)
+from app.services.llm import ask_lighthouse, get_ollama_status, run_ollama_model_test
+from app.services.llm_conversation_preview import (
+    build_llm_conversation_preview,
+    format_llm_conversation_preview_report,
+)
+from app.services.llm_preview_dataset_export import (
+    export_llm_preview_dataset,
+    format_llm_preview_dataset_export_report,
+)
+from app.services.llm_preview_feedback import (
+    format_llm_preview_feedback_result,
+    format_preview_feedback_labels_report,
+    record_llm_preview_feedback,
+)
+from app.services.llm_preview_journal import (
+    format_llm_route_previews_report,
+    record_llm_route_preview,
+)
+from app.services.llm_route_engine import build_llm_route_call
+from app.services.operator_conversation import (
+    format_operator_response,
+    interpret_operator_input,
+)
+from app.services.operator_dataset_export import (
+    export_operator_route_dataset,
+    format_operator_dataset_export_report,
+)
+from app.services.operator_interaction_journal import (
+    format_feedback_labels_report,
+    format_operator_feedback_result,
+    format_operator_interactions_report,
+    record_operator_feedback,
+    record_operator_interaction,
+)
+from app.services.operator_routes import (
+    build_operator_routes_report,
+    validate_route_handoff_for_autorun,
+)
+from app.services.snapshot_store import (
+    get_latest_snapshot,
+    list_snapshots,
+    save_snapshot,
+)
 from app.services.target_resolver import (
     TARGET_STATUS_CANDIDATE_FOUND,
     format_target_resolution,
@@ -97,6 +103,9 @@ from app.services.target_resolver import (
 )
 from app.services.tool_executor import ToolExecutionResult
 from app.services.tool_planner import ToolPlan, plan_tools_for_request
+from app.services.windows_diagnostic_findings import build_windows_diagnostic_findings
+from app.services.windows_evidence_aggregator import collect_windows_evidence
+from app.services.windows_evidence_report import format_windows_evidence_report
 
 
 def classify_percent(value: Any, warning_at: float, critical_at: float) -> str:
@@ -168,6 +177,7 @@ def print_help() -> None:
     print("turn feedback <turn_id> <label> [note] Save feedback for a turn")
     print("turn feedback latest <label> [note] Save feedback for the latest turn")
     print("case preview <turn_id> Preview a deterministic case candidate without writing memory")
+    print("case approve <turn_id> <fingerprint> Promote only the exact approved case candidate")
     print("llm previews Show recent LLM route preview journal entries")
     print("llm preview feedback labels Show valid LLM preview feedback labels")
     print("llm preview feedback <preview_id> <label> [note] Save feedback for an LLM preview")
@@ -199,6 +209,7 @@ def print_help() -> None:
     print("- turn feedback turn-example useful routed correctly")
     print("- turn feedback latest useful routed correctly")
     print("- case preview turn-example")
+    print("- case approve turn-example <64-character-fingerprint>")
     print("- llm previews")
     print("- llm preview feedback labels")
     print("- llm preview feedback llmprev-example useful routed correctly")
@@ -1644,6 +1655,18 @@ def print_case_preview_report(turn_id: str) -> None:
     print(format_case_memory_candidate_preview_report(result))
 
 
+def print_case_approval_report(
+    turn_id: str,
+    fingerprint: str,
+) -> None:
+    """Promote one exact Operator-approved candidate and print the result."""
+    result = promote_case_memory_candidate(
+        turn_id,
+        fingerprint,
+    )
+    print(format_case_memory_promotion_result(result))
+
+
 def is_placeholder_turn_id(turn_id: str) -> bool:
     """
     Return true when the Operator entered an example placeholder, not a real id.
@@ -1831,6 +1854,51 @@ def run_canonical_command(command: str) -> str:
             return "handled"
 
         print_case_preview_report(turn_id)
+        return "handled"
+
+    if normalized_command == "case approve":
+        print("Usage: case approve <turn_id> <fingerprint>")
+        return "handled"
+
+    if normalized_command.startswith("case approve "):
+        approval_text = cleaned_command[len("case approve "):].strip()
+        parts = approval_text.split()
+
+        if len(parts) != 2:
+            print("Usage: case approve <turn_id> <fingerprint>")
+            return "handled"
+
+        turn_id, supplied_fingerprint = parts
+
+        if (
+            turn_id.strip().lower() == "latest"
+            or is_placeholder_turn_id(turn_id)
+        ):
+            print("Usage: case approve <turn_id> <fingerprint>")
+            print(
+                "Use the exact turn id shown by 'case preview'; "
+                "'latest' is not an approval authority."
+            )
+            return "handled"
+
+        normalized_fingerprint = (
+            normalize_case_memory_candidate_fingerprint(
+                supplied_fingerprint
+            )
+        )
+
+        if normalized_fingerprint is None:
+            print("Usage: case approve <turn_id> <fingerprint>")
+            print(
+                "Fingerprint must be exactly 64 hexadecimal characters "
+                "from the current case preview."
+            )
+            return "handled"
+
+        print_case_approval_report(
+            turn_id,
+            normalized_fingerprint,
+        )
         return "handled"
 
     if normalized_command in {

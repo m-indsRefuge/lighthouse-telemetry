@@ -254,3 +254,158 @@ memory_context
 llm_route_contract
 errors
 ```
+## CaseMemoryPromotionResult (V1.5 C02 controlled-promotion extension)
+
+`CaseMemoryPromotionResult` is the deterministic result contract returned by
+the controlled case-promotion service.
+
+Field order is frozen as:
+
+```text
+status
+decision
+message
+source_turn_id
+candidate_id
+candidate_fingerprint
+promotion_id
+case_id
+persisted
+case_write_performed
+audit_complete
+errors
+warnings
+```
+
+Allowed `status` values are:
+
+```text
+ok
+refused
+duplicate
+conflict
+partial
+error
+```
+
+Allowed `decision` values are:
+
+```text
+promoted
+refused
+duplicate
+conflict
+error
+```
+
+The state fields have distinct meanings:
+
+- `persisted` means the exact approved proposed case exists in curated memory
+  after the operation.
+- `case_write_performed` means this invocation appended a new curated case.
+- `audit_complete` means the required promotion audit sequence completed.
+
+Important result combinations include:
+
+```text
+new promotion:
+status = ok
+decision = promoted
+persisted = true
+case_write_performed = true
+audit_complete = true
+
+duplicate:
+status = duplicate
+decision = duplicate
+persisted = true
+case_write_performed = false
+audit_complete = true
+
+conflict:
+status = conflict
+decision = conflict
+persisted = false
+case_write_performed = false
+
+case saved but final audit failed:
+status = partial
+decision = promoted
+persisted = true
+case_write_performed = true
+audit_complete = false
+```
+
+### Candidate fingerprint contract
+
+The C02 approval fingerprint uses:
+
+```text
+version: case_candidate_fingerprint_v1
+algorithm: SHA-256
+encoding: canonical UTF-8 JSON
+display: 64 lowercase hexadecimal characters
+```
+
+The canonical fingerprint payload contains exactly:
+
+```text
+fingerprint_version
+candidate_schema_version
+candidate_id
+source_turn_id
+provenance
+proposed_case
+```
+
+It excludes presentation-only or derived runtime fields such as candidate
+validation, promotion flags, safety flags, formatted report text, runtime
+approval results, and audit timestamps.
+
+The CLI may accept uppercase hexadecimal fingerprint input, but it is normalized
+to lowercase before comparison.
+
+### Case-promotion audit contract
+
+The operational promotion audit is appended to:
+
+```text
+memory/case_promotions.jsonl
+```
+
+The minimum audit record fields are:
+
+```text
+schema_version
+policy_version
+event_id
+promotion_id
+created_at
+event_type
+source_turn_id
+candidate_id
+candidate_fingerprint
+case_id
+operator_approved
+approval_method
+decision
+persisted
+case_write_performed
+reason
+```
+
+The approval method is fixed as:
+
+```text
+explicit_candidate_fingerprint
+```
+
+`event_type` is either `attempt` or `outcome`.
+
+An `attempt` record uses decision `attempting`. Outcome decisions are
+`promoted`, `duplicate`, `conflict`, or `error`.
+
+The audit contract records promotion authority separately from the CaseMemory
+record itself. Operator approval authorizes persistence of the exact candidate;
+it does not change the case source, confidence, status, cause, action, or
+outcome.

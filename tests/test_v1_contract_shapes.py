@@ -10,6 +10,7 @@ not as a casual refactor failure.
 """
 
 import sys
+from dataclasses import fields
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,7 @@ from app.services.case_memory_candidate import (
     CaseMemoryCandidate,
     CaseMemoryCandidateValidation,
 )
+from app.services.case_memory_promotion import CaseMemoryPromotionResult
 from app.services.engine_memory_context import EngineMemoryContext
 from app.services.lighthouse_engine import LighthouseEngineResult
 from app.services.llm_contract import LLMContractValidationResult
@@ -475,3 +477,62 @@ def test_frozen_contract_shapes_are_json_serializable() -> None:
 
     for payload in objects:
         json.dumps(payload)
+
+def test_case_memory_promotion_result_contract_shape_is_frozen() -> None:
+    assert [field.name for field in fields(CaseMemoryPromotionResult)] == [
+        "status",
+        "decision",
+        "message",
+        "source_turn_id",
+        "candidate_id",
+        "candidate_fingerprint",
+        "promotion_id",
+        "case_id",
+        "persisted",
+        "case_write_performed",
+        "audit_complete",
+        "errors",
+        "warnings",
+    ]
+
+
+def test_case_memory_promotion_result_truth_semantics_are_frozen() -> None:
+    duplicate = CaseMemoryPromotionResult(
+        status="duplicate",
+        decision="duplicate",
+        message="Exact approved case already exists.",
+        source_turn_id="turn-example",
+        candidate_id="candidate-example",
+        candidate_fingerprint="a" * 64,
+        promotion_id="promotion-example",
+        case_id="case-example",
+        persisted=True,
+        case_write_performed=False,
+        audit_complete=True,
+    )
+
+    assert duplicate.persisted is True
+    assert duplicate.case_write_performed is False
+    assert duplicate.audit_complete is True
+
+    partial = CaseMemoryPromotionResult(
+        status="partial",
+        decision="promoted",
+        message=(
+            "Exact approved case was persisted, but final audit "
+            "did not complete."
+        ),
+        source_turn_id="turn-example",
+        candidate_id="candidate-example",
+        candidate_fingerprint="a" * 64,
+        promotion_id="promotion-example",
+        case_id="case-example",
+        persisted=True,
+        case_write_performed=True,
+        audit_complete=False,
+        errors=("final audit failed",),
+    )
+
+    assert partial.persisted is True
+    assert partial.case_write_performed is True
+    assert partial.audit_complete is False

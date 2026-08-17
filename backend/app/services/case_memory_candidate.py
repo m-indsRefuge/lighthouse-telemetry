@@ -10,6 +10,8 @@ curated memory.
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +36,8 @@ from app.services.memory_manager import build_case_memory
 from app.services.operator_routes import validate_route_handoff_for_autorun
 
 CASE_MEMORY_CANDIDATE_SCHEMA_VERSION = "case_memory_candidate_v1_5"
+CASE_MEMORY_CANDIDATE_FINGERPRINT_VERSION = "case_candidate_fingerprint_v1"
+CASE_MEMORY_CANDIDATE_FINGERPRINT_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 CASE_MEMORY_CANDIDATE_STATUS_OK = "ok"
 CASE_MEMORY_CANDIDATE_STATUS_NOT_FOUND = "not_found"
@@ -129,6 +133,53 @@ def build_case_memory_candidate_id(source_turn_id: str) -> str:
     stable_source = f"{CASE_MEMORY_CANDIDATE_SCHEMA_VERSION}:{source_turn_id.strip()}"
     digest = hashlib.sha256(stable_source.encode("utf-8")).hexdigest()[:20]
     return f"case_candidate_{digest}"
+
+
+
+def build_case_memory_candidate_fingerprint(
+    candidate: CaseMemoryCandidate,
+) -> str:
+    """
+    Return the deterministic SHA-256 identity of promotion-relevant candidate state.
+
+    The fingerprint binds Operator approval to evidence provenance plus the exact
+    proposed curated case. Derived validation, preview promotion flags, and
+    preview safety flags are deliberately excluded.
+    """
+    payload = {
+        "fingerprint_version": CASE_MEMORY_CANDIDATE_FINGERPRINT_VERSION,
+        "candidate_schema_version": candidate.schema_version,
+        "candidate_id": candidate.candidate_id,
+        "source_turn_id": candidate.source_turn_id,
+        "provenance": deepcopy(candidate.provenance),
+        "proposed_case": deepcopy(candidate.proposed_case),
+    }
+    canonical_payload = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+
+def normalize_case_memory_candidate_fingerprint(
+    value: str,
+) -> str | None:
+    """
+    Normalize one explicit Operator-supplied candidate fingerprint.
+
+    Only a complete 64-character hexadecimal SHA-256 digest is accepted.
+    """
+    if not isinstance(value, str):
+        return None
+
+    cleaned = value.strip()
+
+    if CASE_MEMORY_CANDIDATE_FINGERPRINT_PATTERN.fullmatch(cleaned) is None:
+        return None
+
+    return cleaned.lower()
 
 
 def preview_case_memory_candidate(
@@ -595,6 +646,11 @@ def format_case_memory_candidate_preview_report(
 ) -> str:
     """Format an Operator-readable C01 preview report."""
     candidate = result.candidate
+    candidate_fingerprint = (
+        build_case_memory_candidate_fingerprint(candidate)
+        if candidate is not None
+        else "unavailable"
+    )
     lines = [
         "LIGHTHOUSE CASE CANDIDATE PREVIEW",
         "=" * REPORT_WIDTH,
@@ -606,6 +662,7 @@ def format_case_memory_candidate_preview_report(
         f"Message: {result.message}",
         f"Source turn: {candidate.source_turn_id if candidate else result.requested_turn_id}",
         f"Candidate ID: {candidate.candidate_id if candidate else 'unavailable'}",
+        f"Candidate fingerprint: {candidate_fingerprint}",
         "",
         "Provenance:",
     ]
@@ -652,6 +709,23 @@ def format_case_memory_candidate_preview_report(
                 (
                     "Case validation: "
                     f"{'valid' if candidate.validation.case_valid else 'invalid'}"
+                ),
+            ]
+        )
+
+    if (
+        candidate is not None
+        and result.status == CASE_MEMORY_CANDIDATE_STATUS_OK
+        and candidate.validation.provenance_valid
+        and candidate.validation.case_valid
+    ):
+        lines.extend(
+            [
+                "",
+                "To approve this exact candidate:",
+                (
+                    f"case approve {candidate.source_turn_id} "
+                    f"{candidate_fingerprint}"
                 ),
             ]
         )

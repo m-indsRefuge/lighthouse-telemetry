@@ -459,3 +459,168 @@ Deterministic gates remain authority.
 ```
 
 That is the design boundary that makes the memory layer useful without making it unsafe.
+## V1.5 C02 controlled promotion boundary
+
+C02 introduces the first deliberate write from operational conversational
+evidence into curated CaseMemory.
+
+The controlled path is:
+
+```text
+conversation turn journal
+-> current Operator feedback
+-> deterministic C01 CaseMemoryCandidate
+-> provenance validation
+-> proposed CaseMemory validation
+-> exact candidate fingerprint
+-> explicit Operator approval
+-> approval-time candidate regeneration
+-> fingerprint comparison
+-> complete curated-store duplicate/conflict check
+-> ATTEMPT audit
+-> curated case append when genuinely new
+-> OUTCOME audit
+```
+
+The authority rule is:
+
+```text
+Only explicit Operator approval of the exact candidate contents may authorize
+turn-derived CaseMemory persistence.
+```
+
+A model proposal, telemetry record, journal entry, dataset classification, or
+generic memory-policy result cannot substitute for that approval.
+
+### Candidate fingerprint
+
+`candidate_id` remains a deterministic lineage identifier. It is not an approval
+token and does not bind the Operator to the candidate contents.
+
+C02 therefore adds a content fingerprint:
+
+```text
+version: case_candidate_fingerprint_v1
+algorithm: SHA-256
+canonical encoding: UTF-8 JSON with stable sorted keys
+display: 64 lowercase hexadecimal characters
+```
+
+The fingerprint covers:
+
+```text
+fingerprint_version
+candidate_schema_version
+candidate_id
+source_turn_id
+provenance
+proposed_case
+```
+
+It does not cover candidate validation, promotion flags, safety flags, formatted
+presentation text, runtime approval results, or audit timestamps.
+
+The candidate is rebuilt when approval is attempted. A fingerprint produced by
+an earlier preview therefore cannot authorize changed evidence or changed
+proposed memory.
+
+### Promotion audit
+
+Promotion events are appended to:
+
+```text
+memory/case_promotions.jsonl
+```
+
+A promotion that reaches the persistence gate records an `attempt` before any
+curated case mutation and then records an `outcome` where possible.
+
+The audit records Operator promotion authority separately from the CaseMemory's
+epistemic source.
+
+The approval method is:
+
+```text
+explicit_candidate_fingerprint
+```
+
+The audit records include the promotion id, source turn id, candidate id,
+candidate fingerprint, case id, decision, persisted state,
+`case_write_performed`, and a human-readable reason.
+
+### Duplicate and conflict behavior
+
+Before persistence Lighthouse reads the complete curated case store.
+
+For the same `case_id`:
+
+```text
+equivalent meaningful CaseMemory
+-> duplicate
+-> persisted = true
+-> case_write_performed = false
+```
+
+Different meaningful CaseMemory with the same id is a conflict:
+
+```text
+conflict
+-> persisted = false
+-> case_write_performed = false
+```
+
+Comparison is deterministic and exact. C02 does not use semantic or
+model-generated deduplication.
+
+Known store-injected metadata may be ignored only where the proposed case did
+not contain that metadata itself.
+
+### Failure truthfulness
+
+C02 does not pretend that a successful case append vanished because a later
+audit write failed.
+
+The required semantics are:
+
+```text
+ATTEMPT audit failure
+-> no curated write
+-> error
+
+curated save failure
+-> error outcome attempted
+-> persisted = false
+
+curated save + successful final audit
+-> ok / promoted
+-> persisted = true
+-> audit_complete = true
+
+curated save + failed final audit
+-> partial / promoted
+-> persisted = true
+-> case_write_performed = true
+-> audit_complete = false
+```
+
+There is no rollback or deletion of a successfully persisted case.
+
+Retrying the same exact approval after a partial result detects the equivalent
+curated case and returns `duplicate` without writing a second case.
+
+### Memory is still not authority
+
+C02 does not allow any of these to authorize promotion:
+
+```text
+model output
+journal presence alone
+telemetry evidence alone
+dataset classification
+generic memory-policy approval
+semantic retrieval
+tool execution state
+```
+
+The Operator supplies promotion authority. Deterministic validation enforces the
+boundary.

@@ -187,7 +187,7 @@ def save_case_memory(
     case_id = str(case_memory.get("case_id", ""))
 
     try:
-        existing_cases_result = read_case_memories(memory_dir=memory_dir)
+        existing_cases_result = read_case_memories(limit=None, memory_dir=memory_dir)
         existing_cases = unwrap_case_memory_records(existing_cases_result)
     except Exception as exc:
         return MemoryManagerResult(
